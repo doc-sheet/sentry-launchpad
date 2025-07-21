@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Tuple
 
 import lief
 
-from launchpad.artifacts.apple.zipped_xcarchive import ZippedXCArchive
+from launchpad.artifacts.apple.zipped_xcarchive import BinaryInfo, ZippedXCArchive
 from launchpad.artifacts.artifact import AppleArtifact
 from launchpad.parsers.apple.macho_parser import MachOParser
 from launchpad.parsers.apple.macho_size_analyzer import MachOSizeAnalyzer
@@ -20,6 +20,7 @@ from launchpad.size.hermes.utils import make_hermes_reports
 from launchpad.size.insights.apple.image_optimization import ImageOptimizationInsight
 from launchpad.size.insights.apple.localized_strings import LocalizedStringsInsight
 from launchpad.size.insights.apple.loose_images import LooseImagesInsight
+from launchpad.size.insights.apple.main_binary_export_metadata import MainBinaryExportMetadataInsight
 from launchpad.size.insights.apple.small_files import SmallFilesInsight
 from launchpad.size.insights.apple.strip_symbols import StripSymbolsInsight
 from launchpad.size.insights.common.duplicate_files import DuplicateFilesInsight
@@ -131,8 +132,8 @@ class AppleAppAnalyzer:
                 logger.info(f"Analyzing binary {binary_info.name} at {binary_info.path}")
                 if binary_info.dsym_path:
                     logger.debug(f"Found dSYM file for {binary_info.name} at {binary_info.dsym_path}")
-                binary = self._analyze_binary(binary_info.path, binary_info.dsym_path)
-                if binary.binary_analysis is not None:
+                binary = self._analyze_binary(binary_info)
+                if binary and binary.binary_analysis is not None:
                     binary_analysis.append(binary)
                     binary_analysis_map[str(binary_info.path.relative_to(app_bundle_path))] = binary
 
@@ -177,6 +178,9 @@ class AppleAppAnalyzer:
                 loose_images=self._generate_insight_with_tracing(LooseImagesInsight, insights_input, "loose_images"),
                 image_optimization=self._generate_insight_with_tracing(
                     ImageOptimizationInsight, insights_input, "image_optimization"
+                ),
+                main_binary_exported_symbols=self._generate_insight_with_tracing(
+                    MainBinaryExportMetadataInsight, insights_input, "main_binary_exported_symbols"
                 ),
             )
 
@@ -403,21 +407,14 @@ class AppleAppAnalyzer:
             return insight_class().generate(insights_input)
 
     @trace("apple.analyze_binary")
-    def _analyze_binary(
-        self, binary_path: Path, dwarf_binary_path: Path | None = None, skip_swift_metadata: bool = False
-    ) -> MachOBinaryAnalysis:
+    def _analyze_binary(self, binary_info: BinaryInfo, skip_swift_metadata: bool = False) -> MachOBinaryAnalysis | None:
+        binary_path = binary_info.path
+        dwarf_binary_path = binary_info.dsym_path
+        is_main_binary = binary_info.is_main_binary
+
         if not binary_path.exists():
             logger.warning(f"Binary not found: {binary_path}")
-            return MachOBinaryAnalysis(
-                binary_path=binary_path,
-                executable_size=0,
-                architectures=[],
-                linked_libraries=[],
-                sections={},
-                swift_metadata=None,
-                binary_analysis=None,
-                symbol_info=None,
-            )
+            return None
 
         logger.debug(f"Analyzing binary: {binary_path}")
 
@@ -450,6 +447,7 @@ class AppleAppAnalyzer:
                 dwarf_binary = dwarf_fat_binary.at(0)
                 symbol_sizes = MachOSymbolSizes(dwarf_binary).get_symbol_sizes()
                 symbol_info = SymbolInfo(
+                    symbol_sizes=symbol_sizes,
                     swift_type_groups=SwiftSymbolTypeAggregator().aggregate_symbols(symbol_sizes),
                     objc_type_groups=ObjCSymbolTypeAggregator().aggregate_symbols(symbol_sizes),
                     strippable_symbols_size=strippable_symbols_size,
@@ -459,6 +457,7 @@ class AppleAppAnalyzer:
         else:
             if strippable_symbols_size > 0:
                 symbol_info = SymbolInfo(
+                    symbol_sizes=[],
                     swift_type_groups=[],
                     objc_type_groups=[],
                     strippable_symbols_size=strippable_symbols_size,
@@ -488,6 +487,7 @@ class AppleAppAnalyzer:
             binary_analysis=binary_analysis,
             symbol_info=symbol_info,
             objc_method_names=objc_method_names,
+            is_main_binary=is_main_binary,
         )
 
     @trace("apple.test_strip_symbols_removal")
