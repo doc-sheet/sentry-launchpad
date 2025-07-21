@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .treemap import TreemapElement, TreemapResults, TreemapType
+from .treemap import TreemapResults, TreemapType
 
 
 class BaseAppInfo(BaseModel):
@@ -62,7 +62,9 @@ class FileInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     path: str = Field(..., description="Relative path in the bundle")
-    full_path: Path = Field(..., exclude=True, description="Fully qualified path to the file")
+
+    # Some FileInfo objects are not always backed by a file (e.g. asset catalog elements), so full_path is None
+    full_path: Path | None = Field(..., exclude=True, description="Fully qualified path to the file")
     size: int = Field(
         ...,
         ge=0,
@@ -72,7 +74,7 @@ class FileInfo(BaseModel):
     hash_md5: str = Field(..., description="MD5 hash of file contents")
     treemap_type: TreemapType = Field(..., description="Type for treemap visualization")
     # Some files can be further broken down, even though it's children are not files
-    children: List[TreemapElement] = Field(default_factory=list, description="Children of the file")
+    children: List[FileInfo] = Field(default_factory=list, description="Children of the file")
 
 
 class BaseAnalysisResults(BaseModel):
