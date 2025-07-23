@@ -44,6 +44,7 @@ def create_kafka_consumer(
         "bootstrap.servers": config["bootstrap_servers"],
         "group.id": config["group_id"],
         "auto.offset.reset": config["auto_offset_reset"],
+        "arroyo.strict.offset.reset": config["arroyo_strict_offset_reset"],
         "enable.auto.commit": False,
         "enable.auto.offset.store": False,
     }
@@ -128,6 +129,9 @@ def get_kafka_config() -> Dict[str, Any]:
     if not topics_env:
         raise ValueError("KAFKA_TOPICS env var is required")
 
+    # Parse arroyo_strict_offset_reset as boolean, default to None if invalid
+    arroyo_strict_offset_reset = {"true": True, "false": False}.get(os.getenv("ARROYO_STRICT_OFFSET_RESET", "").lower())
+
     # Optional configuration with defaults
     return {
         "bootstrap_servers": bootstrap_servers,
@@ -137,4 +141,5 @@ def get_kafka_config() -> Dict[str, Any]:
         "max_pending_futures": int(os.getenv("KAFKA_MAX_PENDING_FUTURES", "100")),
         "healthcheck_file": os.getenv("KAFKA_HEALTHCHECK_FILE"),
         "auto_offset_reset": os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest"),  # latest = skip old messages
+        "arroyo_strict_offset_reset": arroyo_strict_offset_reset,
     }
