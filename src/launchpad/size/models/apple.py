@@ -8,7 +8,7 @@ from typing import List
 
 import lief
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from launchpad.parsers.apple.macho_symbol_sizes import SymbolSize
 from launchpad.parsers.apple.objc_symbol_type_aggregator import ObjCSymbolTypeGroup
@@ -25,19 +25,6 @@ from .insights import (
     LargeVideoFileInsightResult,
     UnnecessaryFilesInsightResult,
 )
-
-
-@dataclass
-class LooseImageGroup:
-    """Group of loose image files with the same canonical name."""
-
-    canonical_name: str
-    images: List[FileInfo]
-
-    @property
-    def total_size(self) -> int:
-        """Total size of all images in this group."""
-        return sum(img.size for img in self.images)
 
 
 class AppleAnalysisResults(BaseAnalysisResults):
@@ -71,6 +58,29 @@ class SmallFilesInsightResult(BaseInsightResult):
     file_count: int = Field(..., description="Number of small files found")
 
 
+class LooseImageGroup(BaseModel):
+    """Group of loose image files with the same canonical name."""
+
+    canonical_name: str
+    images: List[FileInfo]
+
+    @property
+    def total_size(self) -> int:
+        """Total size of all images in this group."""
+        return sum(img.size for img in self.images)
+
+    @computed_field
+    @property
+    def total_savings(self) -> int:
+        """Size savings by moving to asset catalog (excluding largest image that would be kept)."""
+        if len(self.images) <= 1:
+            return 0
+
+        # TODO: this doesn't handle some edge cases yet like when there are iphone/ipad variants
+        max_size = max(img.size for img in self.images)
+        return sum(img.size for img in self.images) - max_size
+
+
 class LooseImagesInsightResult(BaseInsightResult):
     """Results from loose images analysis."""
 
@@ -84,21 +94,21 @@ class MainBinaryExportMetadataResult(BaseInsightResult):
     """Results from main binary exported symbols metadata analysis."""
 
 
-@dataclass
-class OptimizableImageFile:
+class OptimizableImageFile(BaseModel):
     """Information about an image file that can be optimized."""
 
-    file_info: FileInfo
+    model_config = ConfigDict(frozen=True)
 
-    current_size: int
+    file_info: FileInfo = Field(..., description="File information")
+    current_size: int = Field(..., description="Current file size in bytes")
 
     # Minification savings (optimizing current format)
-    minify_savings: int = 0
-    minified_size: int | None = None
+    minify_savings: int = Field(default=0, ge=0, description="Potential savings from minification")
+    minified_size: int | None = Field(default=None, description="Size after minification")
 
     # HEIC conversion savings (converting to HEIC format)
-    conversion_savings: int = 0
-    heic_size: int | None = None
+    conversion_savings: int = Field(default=0, ge=0, description="Potential savings from HEIC conversion")
+    heic_size: int | None = Field(default=None, description="Size after HEIC conversion")
 
     @property
     def potential_savings(self) -> int:
@@ -149,7 +159,10 @@ class MachOBinaryAnalysis(BaseBinaryAnalysis):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    binary_path: Path = Field(..., description="Fully qualified path to the binary within the app bundle")
+    binary_absolute_path: Path = Field(
+        ..., description="Fully qualified path to the binary within the app bundle", exclude=True
+    )
+    binary_relative_path: str = Field(..., description="Path to the binary within the app bundle")
     swift_metadata: SwiftMetadata | None = Field(None, description="Swift-specific metadata")
     binary_analysis: BinaryAnalysis | None = Field(
         None,
