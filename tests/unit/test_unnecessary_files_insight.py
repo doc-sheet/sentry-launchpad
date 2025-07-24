@@ -19,7 +19,7 @@ class TestUnnecessaryFilesInsight:
 
     def _create_insights_input(self, files: list[FileInfo]) -> InsightsInput:
         """Helper method to create InsightsInput for testing."""
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
         return InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
             file_analysis=file_analysis,
@@ -37,7 +37,8 @@ class TestUnnecessaryFilesInsight:
                 size=5000,
                 file_type="md",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash1",
+                hash="hash1",
+                is_dir=False,
             ),
             # Shell script
             FileInfo(
@@ -46,7 +47,8 @@ class TestUnnecessaryFilesInsight:
                 size=3000,
                 file_type="sh",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash2",
+                hash="hash2",
+                is_dir=False,
             ),
             # Xcode config
             FileInfo(
@@ -55,7 +57,8 @@ class TestUnnecessaryFilesInsight:
                 size=2000,
                 file_type="xcconfig",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash3",
+                hash="hash3",
+                is_dir=False,
             ),
         ]
 
@@ -67,7 +70,8 @@ class TestUnnecessaryFilesInsight:
                 size=100000,
                 file_type="",
                 treemap_type=TreemapType.EXECUTABLES,
-                hash_md5="hash4",
+                hash="hash4",
+                is_dir=False,
             ),
             # Asset file
             FileInfo(
@@ -76,7 +80,8 @@ class TestUnnecessaryFilesInsight:
                 size=50000,
                 file_type="car",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5="hash5",
+                hash="hash5",
+                is_dir=False,
             ),
         ]
 
@@ -88,9 +93,9 @@ class TestUnnecessaryFilesInsight:
         assert result.total_savings == 10000  # 5000 + 3000 + 2000
 
         # Files should be sorted by size descending
-        assert result.files[0].size == 5000  # README.md
-        assert result.files[1].size == 3000  # build.sh
-        assert result.files[2].size == 2000  # Debug.xcconfig
+        assert result.files[0].total_savings == 5000  # README.md
+        assert result.files[1].total_savings == 3000  # build.sh
+        assert result.files[2].total_savings == 2000  # Debug.xcconfig
 
     def test_generate_with_no_unnecessary_files(self):
         """Test that no insight is generated when no unnecessary files are found."""
@@ -101,7 +106,8 @@ class TestUnnecessaryFilesInsight:
                 size=100000,
                 file_type="",
                 treemap_type=TreemapType.EXECUTABLES,
-                hash_md5="hash1",
+                hash="hash1",
+                is_dir=False,
             ),
             FileInfo(
                 full_path=Path("Assets.car"),
@@ -109,7 +115,8 @@ class TestUnnecessaryFilesInsight:
                 size=50000,
                 file_type="car",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5="hash2",
+                hash="hash2",
+                is_dir=False,
             ),
         ]
 
@@ -139,13 +146,14 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="txt",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
             assert result is not None, f"Should match {filename}"
             assert len(result.files) == 1
-            assert result.files[0].path == filename
+            assert result.files[0].file_path == filename
 
     def test_pattern_matching_changelog_files(self):
         """Test that various CHANGELOG file patterns are matched."""
@@ -163,13 +171,14 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="txt",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
             assert result is not None, f"Should match {filename}"
             assert len(result.files) == 1
-            assert result.files[0].path == filename
+            assert result.files[0].file_path == filename
 
     def test_pattern_matching_shell_scripts(self):
         """Test that shell script patterns are matched."""
@@ -187,13 +196,14 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="sh",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
             assert result is not None, f"Should match {filename}"
             assert len(result.files) == 1
-            assert result.files[0].path == filename
+            assert result.files[0].file_path == filename
 
     def test_pattern_matching_development_files(self):
         """Test that various development files are matched."""
@@ -216,13 +226,14 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type=filename.split(".")[-1] if "." in filename else "",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
             assert result is not None, f"Should match {filename}"
             assert len(result.files) == 1
-            assert result.files[0].path == filename
+            assert result.files[0].file_path == filename
 
     def test_pattern_matching_exact_filenames(self):
         """Test that exact filename matches work correctly."""
@@ -239,13 +250,14 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
             assert result is not None, f"Should match exact filename {filename}"
             assert len(result.files) == 1
-            assert result.files[0].path == filename
+            assert result.files[0].file_path == filename
 
         # These should NOT match (similar but not exact)
         non_matches = [
@@ -260,7 +272,8 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
@@ -282,7 +295,8 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="txt",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
@@ -313,7 +327,8 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type=filename.split(".")[-1] if "." in filename else "",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash",
+                hash="hash",
+                is_dir=False,
             )
             insights_input = self._create_insights_input([file_info])
             result = self.insight.generate(insights_input)
@@ -321,7 +336,7 @@ class TestUnnecessaryFilesInsight:
             if should_match:
                 assert result is not None, f"Should match {filename}"
                 assert len(result.files) == 1
-                assert result.files[0].path == filename
+                assert result.files[0].file_path == filename
             else:
                 assert result is None, f"Should not match {filename}"
 
@@ -334,7 +349,8 @@ class TestUnnecessaryFilesInsight:
                 size=1000,
                 file_type="sh",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash1",
+                hash="hash1",
+                is_dir=False,
             ),
             FileInfo(
                 full_path=Path("README.md"),
@@ -342,7 +358,8 @@ class TestUnnecessaryFilesInsight:
                 size=5000,
                 file_type="md",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash2",
+                hash="hash2",
+                is_dir=False,
             ),
             FileInfo(
                 full_path=Path("medium.xcconfig"),
@@ -350,7 +367,8 @@ class TestUnnecessaryFilesInsight:
                 size=3000,
                 file_type="xcconfig",
                 treemap_type=TreemapType.OTHER,
-                hash_md5="hash3",
+                hash="hash3",
+                is_dir=False,
             ),
         ]
 
@@ -361,6 +379,6 @@ class TestUnnecessaryFilesInsight:
         assert len(result.files) == 3
 
         # Should be sorted by size descending
-        assert result.files[0].size == 5000  # README.md
-        assert result.files[1].size == 3000  # medium.xcconfig
-        assert result.files[2].size == 1000  # small.sh
+        assert result.files[0].total_savings == 5000  # README.md
+        assert result.files[1].total_savings == 3000  # medium.xcconfig
+        assert result.files[2].total_savings == 1000  # small.sh

@@ -1,6 +1,22 @@
 import React from 'react';
 import type { DuplicateFilesInsightResult, FileAnalysisReport, InsightResult, LooseImagesInsightResult, StripBinaryInsightResult } from '../utils/dataConverter';
 
+// Add type for main binary export metadata
+interface FileSavingsResult {
+  file_path: string;
+  total_savings: number;
+}
+
+interface MainBinaryExportMetadataResult {
+  total_savings: number;
+  files: FileSavingsResult[];
+}
+
+interface FileSavingsInsightResult {
+  total_savings: number;
+  files: FileSavingsResult[];
+}
+
 interface InsightsDisplayProps {
   data: FileAnalysisReport;
 }
@@ -34,6 +50,9 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
       webp_optimization: 'WebP Optimization',
       strip_binary: 'Binary Stripping',
       localized_strings: 'Localized Strings',
+      small_files: 'Small Files',
+      unnecessary_files: 'Unnecessary Files',
+      main_binary_exported_symbols: 'Main Binary Export Metadata',
     };
     return titles[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
@@ -41,13 +60,16 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
   const getInsightDescription = (key: string): string => {
     const descriptions: Record<string, string> = {
       duplicate_files: 'Files that appear multiple times in your app, wasting space',
-      large_images: 'Image files that could be compressed or optimized',
-      large_videos: 'Video files that may benefit from compression',
-      large_audio: 'Audio files that could be optimized for size',
+      large_images: 'Image files with potential optimization savings',
+      large_videos: 'Video files with potential compression savings',
+      large_audio: 'Audio files with potential optimization savings',
       hermes_debug_info: 'Debug information that can be removed from production builds',
       webp_optimization: 'Images that could be converted to WebP format for better compression',
       strip_binary: 'Debug symbols and metadata that can be removed from binaries',
-      localized_strings: 'Unused localization strings that can be removed',
+      localized_strings: 'Localization strings with potential optimization savings',
+      small_files: 'Small files wasting space due to filesystem block size constraints',
+      main_binary_exported_symbols: 'Export metadata in main binaries that could be optimized',
+      unnecessary_files: 'Unnecessary files that can be removed to save space',
     };
     return descriptions[key] || 'Potential optimization opportunity';
   };
@@ -62,6 +84,9 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
       webp_optimization: '🗜️',
       strip_binary: '⚡',
       localized_strings: '🌐',
+      small_files: '📄',
+      main_binary_exported_symbols: '📦',
+      unnecessary_files: '🗑️',
     };
     return icons[key] || '💡';
   };
@@ -96,12 +121,26 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
       return hasValidSavings || hasImageGroups;
     }
 
+    // Handle main binary export metadata differently (has FileSavingsResult files)
+    if (key === 'main_binary_exported_symbols') {
+      const exportInsight = value as MainBinaryExportMetadataResult;
+      const hasFiles = exportInsight.files && Array.isArray(exportInsight.files) && exportInsight.files.length > 0;
+      return hasValidSavings || hasFiles;
+    }
+
+    // Handle insights that now use FileSavingsResult format
+    if (['large_images', 'large_videos', 'large_audio', 'hermes_debug_info', 'unnecessary_files', 'localized_strings', 'small_files'].includes(key)) {
+      const fileSavingsInsight = value as FileSavingsInsightResult;
+      const hasFiles = fileSavingsInsight.files && Array.isArray(fileSavingsInsight.files) && fileSavingsInsight.files.length > 0;
+      return hasValidSavings || hasFiles;
+    }
+
     const regularInsight = value as InsightResult;
     const hasFiles = regularInsight.files && Array.isArray(regularInsight.files) && regularInsight.files.length > 0;
 
     // Include insights that either have savings or have files to show
     return hasValidSavings || hasFiles;
-  }) as [string, InsightResult | DuplicateFilesInsightResult | StripBinaryInsightResult | LooseImagesInsightResult][];
+  }) as [string, InsightResult | DuplicateFilesInsightResult | StripBinaryInsightResult | LooseImagesInsightResult | MainBinaryExportMetadataResult | FileSavingsInsightResult][];
 
   if (insightEntries.length === 0) {
     return null;
@@ -257,7 +296,7 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
                               fontWeight: '600',
                               fontSize: '0.9rem'
                             }}>
-                              📄 {group.filename}
+                              📄 {group.filename} ({group.files.length} files)
                             </div>
                             <div style={{
                               color: '#28a745',
@@ -419,6 +458,67 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
                   </div>
                 );
               })()
+            ) : key === 'main_binary_exported_symbols' ? (
+              // Handle main binary export metadata with FileSavingsResult files
+              (() => {
+                const exportInsight = insight as MainBinaryExportMetadataResult;
+                return exportInsight.files && exportInsight.files.length > 0 && (
+                  <div>
+                    <h4 style={{
+                      margin: '0 0 0.75rem 0',
+                      color: '#495057',
+                      fontSize: '1rem',
+                      fontWeight: '600'
+                    }}>
+                      Main Binary Files ({exportInsight.files.length})
+                    </h4>
+                    <div style={{
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '6px',
+                      padding: '0.75rem',
+                      maxHeight: '200px',
+                      overflowY: 'auto'
+                    }}>
+                      {exportInsight.files.map((file, index) => (
+                        <div
+                          key={index}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.75rem',
+                            marginBottom: index < exportInsight.files.length - 1 ? '0.5rem' : '0',
+                            backgroundColor: '#ffffff',
+                            borderRadius: '4px',
+                            border: '1px solid #e9ecef'
+                          }}
+                        >
+                          <div style={{
+                            flex: 1,
+                            color: '#495057',
+                            fontFamily: 'monospace',
+                            fontSize: '0.8rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginRight: '1rem'
+                          }}>
+                            {file.file_path}
+                          </div>
+                          <div style={{
+                            color: '#28a745',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            flexShrink: 0
+                          }}>
+                            {formatSize(file.total_savings)} export metadata
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
             ) : key === 'loose_images' ? (
               // Handle loose images with image groups
               (() => {
@@ -514,8 +614,67 @@ const InsightsDisplay: React.FC<InsightsDisplayProps> = ({ data }) => {
                   </div>
                 );
               })()
+            ) : ['large_images', 'large_videos', 'large_audio', 'hermes_debug_info', 'unnecessary_files', 'localized_strings', 'small_files'].includes(key) ? (
+              // Handle insights that now use FileSavingsResult format
+              (() => {
+                const fileSavingsInsight = insight as FileSavingsInsightResult;
+                return fileSavingsInsight.files && fileSavingsInsight.files.length > 0 && (
+                  <div>
+                    <h4 style={{
+                      margin: '0 0 0.75rem 0',
+                      color: '#495057',
+                      fontSize: '1rem',
+                      fontWeight: '600'
+                    }}>
+                      Affected Files ({fileSavingsInsight.files.length})
+                    </h4>
+                    <div style={{
+                      backgroundColor: '#f8f9fa',
+                      borderRadius: '6px',
+                      padding: '0.75rem',
+                      maxHeight: '200px',
+                      overflowY: 'auto'
+                    }}>
+                      {fileSavingsInsight.files.map((file, index) => (
+                        <div
+                          key={index}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.4rem 0',
+                            borderBottom: index < fileSavingsInsight.files.length - 1 ? '1px solid #e9ecef' : 'none',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          <div style={{
+                            flex: 1,
+                            color: '#495057',
+                            fontFamily: 'monospace',
+                            fontSize: '0.8rem',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginRight: '1rem'
+                          }}>
+                            {file.file_path}
+                          </div>
+                          <div style={{
+                            color: '#28a745',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            flexShrink: 0
+                          }}>
+                            {formatSize(file.total_savings)} savings
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
             ) : (
-              // Handle regular insights with files array
+              // Handle regular insights with files array (legacy format)
               (() => {
                 const regularInsight = insight as InsightResult;
                 return regularInsight.files && regularInsight.files.length > 0 && (

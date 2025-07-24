@@ -27,7 +27,8 @@ class TestSmallFilesInsight:
                 size=1024,  # 1KB - small file
                 file_type="png",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5=f"hash_small_{i}",
+                hash=f"hash_small_{i}",
+                is_dir=False,
             )
             small_files.append(small_file)
 
@@ -39,11 +40,12 @@ class TestSmallFilesInsight:
                 size=8192,  # 8KB - large file
                 file_type="png",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5=f"hash_large_{i}",
+                hash=f"hash_large_{i}",
+                is_dir=False,
             )
             large_files.append(large_file)
 
-        file_analysis = FileAnalysis(files=small_files + large_files)
+        file_analysis = FileAnalysis(files=small_files + large_files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -59,9 +61,9 @@ class TestSmallFilesInsight:
         assert result.file_count == 50
         # Each small file wastes 3072 bytes (4096 - 1024)
         assert result.total_savings == 50 * (APPLE_FILESYSTEM_BLOCK_SIZE - 1024)
-        # Verify all returned files are small
-        for file in result.files:
-            assert file.size < APPLE_FILESYSTEM_BLOCK_SIZE
+        # Verify all returned files have correct savings calculation
+        for file_savings in result.files:
+            assert file_savings.total_savings == APPLE_FILESYSTEM_BLOCK_SIZE - 1024
 
     def test_generate_with_few_total_files(self):
         """Test that no insight is generated when app has < 100 total files."""
@@ -74,11 +76,12 @@ class TestSmallFilesInsight:
                 size=512,  # Small file
                 file_type="png",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5=f"hash_{i}",
+                hash=f"hash_{i}",
+                is_dir=False,
             )
             files.append(file)
 
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -103,11 +106,12 @@ class TestSmallFilesInsight:
                 size=size,
                 file_type="png",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5=f"hash_{i}",
+                hash=f"hash_{i}",
+                is_dir=False,
             )
             files.append(file)
 
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -123,6 +127,9 @@ class TestSmallFilesInsight:
         assert result.file_count == 30
         # Each small file wastes 2048 bytes (4096 - 2048)
         assert result.total_savings == 30 * (APPLE_FILESYSTEM_BLOCK_SIZE - 2048)
+        # Verify savings calculation for each file
+        for file_savings in result.files:
+            assert file_savings.total_savings == APPLE_FILESYSTEM_BLOCK_SIZE - 2048
 
     def test_generate_with_many_files_but_no_small_files(self):
         """Test that insight is generated but with empty results when no small files exist."""
@@ -135,11 +142,12 @@ class TestSmallFilesInsight:
                 size=8192,  # All large files
                 file_type="png",
                 treemap_type=TreemapType.ASSETS,
-                hash_md5=f"hash_{i}",
+                hash=f"hash_{i}",
+                is_dir=False,
             )
             files.append(file)
 
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -154,7 +162,7 @@ class TestSmallFilesInsight:
 
     def test_generate_with_empty_file_list(self):
         """Test that no insight is generated when there are no files."""
-        file_analysis = FileAnalysis(files=[])
+        file_analysis = FileAnalysis(files=[], directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -189,11 +197,12 @@ class TestSmallFilesInsight:
                 size=size,
                 file_type="bin",
                 treemap_type=TreemapType.OTHER,
-                hash_md5=f"hash_{i}",
+                hash=f"hash_{i}",
+                is_dir=False,
             )
             files.append(file)
 
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),
@@ -209,6 +218,9 @@ class TestSmallFilesInsight:
         assert result.file_count == 20
         # Each small file wastes 1 byte (4096 - 4095)
         assert result.total_savings == 20 * 1
+        # Verify savings calculation for each file
+        for file_savings in result.files:
+            assert file_savings.total_savings == 1
 
     def test_calculate_savings_correctly(self):
         """Test that savings calculation is correct for various file sizes."""
@@ -225,7 +237,8 @@ class TestSmallFilesInsight:
                 size=size,
                 file_type="bin",
                 treemap_type=TreemapType.OTHER,
-                hash_md5=f"hash_{i}",
+                hash=f"hash_{i}",
+                is_dir=False,
             )
             files.append(file)
             expected_savings += APPLE_FILESYSTEM_BLOCK_SIZE - size
@@ -238,11 +251,12 @@ class TestSmallFilesInsight:
                 size=8192,
                 file_type="bin",
                 treemap_type=TreemapType.OTHER,
-                hash_md5=f"hash_large_{i}",
+                hash=f"hash_large_{i}",
+                is_dir=False,
             )
             files.append(file)
 
-        file_analysis = FileAnalysis(files=files)
+        file_analysis = FileAnalysis(files=files, directories=[])
 
         insights_input = InsightsInput(
             app_info=Mock(spec=BaseAppInfo),

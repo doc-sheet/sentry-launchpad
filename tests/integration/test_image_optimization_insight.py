@@ -84,13 +84,14 @@ class TestImageOptimizationInsightIntegration:
                     full_path=path,
                     size=path.stat().st_size,
                     file_type=path.suffix[1:].lower() if path.suffix else "unknown",
-                    hash_md5=calculate_file_hash(path),
+                    hash=calculate_file_hash(path),
                     treemap_type=TreemapType.ASSETS,
                     children=[],
+                    is_dir=False,
                 )
                 files.append(file_info)
 
-        return FileAnalysis(files=files)
+        return FileAnalysis(files=files, directories=[])
 
     @pytest.fixture
     def insights_input(self, sample_file_analysis: FileAnalysis) -> InsightsInput:
@@ -162,14 +163,15 @@ class TestImageOptimizationInsightIntegration:
             full_path=large_png,
             size=large_png.stat().st_size,
             file_type="png",
-            hash_md5=calculate_file_hash(large_png),
+            hash=calculate_file_hash(large_png),
             treemap_type=TreemapType.ASSETS,
             children=[],
+            is_dir=False,
         )
 
         png_only_input = InsightsInput(
             app_info=insights_input.app_info,
-            file_analysis=FileAnalysis(files=[file_info]),
+            file_analysis=FileAnalysis(files=[file_info], directories=[]),
             binary_analysis=[],
             treemap=None,
             hermes_reports={},
@@ -196,14 +198,15 @@ class TestImageOptimizationInsightIntegration:
             full_path=large_jpeg,
             size=large_jpeg.stat().st_size,
             file_type="jpg",
-            hash_md5=calculate_file_hash(large_jpeg),
+            hash=calculate_file_hash(large_jpeg),
             treemap_type=TreemapType.ASSETS,
             children=[],
+            is_dir=False,
         )
 
         jpeg_only_input = InsightsInput(
             app_info=insights_input.app_info,
-            file_analysis=FileAnalysis(files=[file_info]),
+            file_analysis=FileAnalysis(files=[file_info], directories=[]),
             binary_analysis=[],
             treemap=None,
             hermes_reports={},
@@ -237,14 +240,15 @@ class TestImageOptimizationInsightIntegration:
             full_path=corrupted_file,
             size=corrupted_file.stat().st_size,
             file_type="png",
-            hash_md5=calculate_file_hash(corrupted_file),
+            hash=calculate_file_hash(corrupted_file),
             treemap_type=TreemapType.ASSETS,
             children=[],
+            is_dir=False,
         )
 
         corrupted_input = InsightsInput(
             app_info=insights_input.app_info,
-            file_analysis=FileAnalysis(files=[file_info]),
+            file_analysis=FileAnalysis(files=[file_info], directories=[]),
             binary_analysis=[],
             treemap=None,
             hermes_reports={},
@@ -272,7 +276,7 @@ class TestImageOptimizationInsightIntegration:
                 is_code_signature_valid=True,
                 code_signature_errors=[],
             ),
-            file_analysis=FileAnalysis(files=[]),
+            file_analysis=FileAnalysis(files=[], directories=[]),
             binary_analysis=[],
             treemap=None,
             hermes_reports={},
@@ -294,11 +298,13 @@ class TestImageOptimizationInsightIntegration:
                     full_path=small_png,
                     size=small_png.stat().st_size,
                     file_type="png",
-                    hash_md5=calculate_file_hash(small_png),
+                    hash=calculate_file_hash(small_png),
                     treemap_type=TreemapType.ASSETS,
                     children=[],
+                    is_dir=False,
                 )
-            ]
+            ],
+            directories=[],
         )
 
         small_input = InsightsInput(

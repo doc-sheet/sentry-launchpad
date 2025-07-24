@@ -19,6 +19,7 @@ from .common import BaseAnalysisResults, BaseAppInfo, BaseBinaryAnalysis, FileIn
 from .insights import (
     BaseInsightResult,
     DuplicateFilesInsightResult,
+    FileSavingsResult,
     HermesDebugInfoInsightResult,
     LargeAudioFileInsightResult,
     LargeImageFileInsightResult,
@@ -48,13 +49,15 @@ class AppleAnalysisResults(BaseAnalysisResults):
 class LocalizedStringInsightResult(BaseInsightResult):
     """Results from localized string analysis."""
 
-    files: List[FileInfo] = Field(..., description="Localized strings files exceeding 100KB threshold")
+    files: List[FileSavingsResult] = Field(
+        ..., description="Localized strings files exceeding 100KB threshold with their sizes"
+    )
 
 
 class SmallFilesInsightResult(BaseInsightResult):
     """Results from small files analysis."""
 
-    files: List[FileInfo] = Field(..., description="Files smaller than filesystem block size")
+    files: List[FileSavingsResult] = Field(..., description="Files smaller than filesystem block size with their sizes")
     file_count: int = Field(..., description="Number of small files found")
 
 
@@ -92,6 +95,8 @@ class LooseImagesInsightResult(BaseInsightResult):
 
 class MainBinaryExportMetadataResult(BaseInsightResult):
     """Results from main binary exported symbols metadata analysis."""
+
+    files: List[FileSavingsResult] = Field(..., description="Main binaries with export metadata that could be reduced")
 
 
 class OptimizableImageFile(BaseModel):
