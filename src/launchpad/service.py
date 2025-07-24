@@ -42,6 +42,7 @@ from launchpad.size.analyzers.apple import AppleAppAnalyzer
 from launchpad.size.models.apple import AppleAppInfo
 from launchpad.size.models.common import BaseAppInfo
 from launchpad.size.runner import do_preprocess, do_size
+from launchpad.utils.file_utils import cleanup_directory
 from launchpad.utils.logging import get_logger
 from launchpad.utils.statsd import DogStatsd, get_statsd
 
@@ -205,6 +206,15 @@ class LaunchpadService:
                 cast(ZippedXCArchive, artifact).generate_ipa(ipa_path)
                 sentry_client.upload_installable_app(organization_id, project_id, artifact_id, str(ipa_path))
                 self._safe_cleanup(str(ipa_path), "installable app")
+                logger.info(f"Successfully uploaded installable app for artifact {artifact_id}")
+            elif isinstance(artifact, (AAB, ZippedAAB)):
+                temp_dir = Path(tempfile.mkdtemp())
+                if isinstance(artifact, AAB):
+                    universal_apk = artifact.get_universal_apk(temp_dir)
+                else:  # ZippedAAB
+                    universal_apk = artifact.get_aab().get_universal_apk(temp_dir)
+                sentry_client.upload_installable_app(organization_id, project_id, artifact_id, universal_apk._path)
+                cleanup_directory(temp_dir)
                 logger.info(f"Successfully uploaded installable app for artifact {artifact_id}")
 
             analyzer = self._create_analyzer(app_info)
