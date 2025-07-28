@@ -2,7 +2,13 @@ from typing import List
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .common import FileInfo
+
+class BaseInsightResult(BaseModel):
+    """Base class for all insight results."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total_savings: int = Field(..., ge=0, description="Total potential savings in bytes")
 
 
 class FileSavingsResult(BaseModel):
@@ -14,70 +20,188 @@ class FileSavingsResult(BaseModel):
     total_savings: int = Field(..., ge=0, description="Potential size savings or file size in bytes")
 
 
-class BaseInsightResult(BaseModel):
-    """Base class for all insight results."""
+class FileSavingsResultGroup(BaseModel):
+    """Group of files with savings information."""
 
     model_config = ConfigDict(frozen=True)
 
-    total_savings: int = Field(..., ge=0, description="Total potential savings in bytes")
+    name: str = Field(..., description="Group name or identifier")
+    files: List[FileSavingsResult] = Field(..., description="Files in this group")
+    total_savings: int = Field(..., ge=0, description="Total savings for this group")
 
 
-class DuplicateFileGroup(BaseModel):
-    """Group of duplicate files with the same filename."""
+class FilesInsightResult(BaseInsightResult):
+    """Base class for insights that return a list of files with savings."""
+
+    files: List[FileSavingsResult] = Field(..., description="Files with potential savings")
+
+
+class GroupsInsightResult(BaseInsightResult):
+    """Base class for insights that return grouped file results."""
+
+    groups: List[FileSavingsResultGroup] = Field(..., description="Groups of files with savings information")
+
+
+class DuplicateFilesInsightResult(GroupsInsightResult):
+    """Results from duplicate files analysis.
+
+    Groups contain duplicate files organized by filename.
+    """
+
+    pass
+
+
+class LargeImageFileInsightResult(FilesInsightResult):
+    """Results from large image files analysis.
+
+    Files contain image files larger than 10MB with their sizes.
+    """
+
+    pass
+
+
+class LargeVideoFileInsightResult(FilesInsightResult):
+    """Results from large video files analysis.
+
+    Files contain video files larger than 10MB with their sizes.
+    """
+
+    pass
+
+
+class LargeAudioFileInsightResult(FilesInsightResult):
+    """Results from large audio files analysis.
+
+    Files contain audio files larger than 5MB with their sizes.
+    """
+
+    pass
+
+
+class HermesDebugInfoInsightResult(FilesInsightResult):
+    """Results from Hermes debug info analysis.
+
+    Files contain Hermes bytecode files with potential debug info savings.
+    """
+
+    pass
+
+
+class UnnecessaryFilesInsightResult(FilesInsightResult):
+    """Results from unnecessary files analysis.
+
+    Files contain unnecessary files with their sizes that could be removed.
+    """
+
+    pass
+
+
+class WebPOptimizationInsightResult(FilesInsightResult):
+    """Results from WebP optimization analysis.
+
+    Files contain optimizeable image files.
+    """
+
+    pass
+
+
+class LocalizedStringInsightResult(FilesInsightResult):
+    """Results from localized string analysis.
+
+    Files contain localized strings files exceeding 100KB threshold with their sizes.
+    """
+
+    pass
+
+
+class LocalizedStringCommentsInsightResult(FilesInsightResult):
+    """Results from localized string comments analysis.
+
+    Files contain localized strings files with comment stripping opportunities.
+    """
+
+    pass
+
+
+class SmallFilesInsightResult(FilesInsightResult):
+    """Results from small files analysis.
+
+    Files contain files smaller than filesystem block size with their sizes.
+    """
+
+    pass
+
+
+class LooseImagesInsightResult(GroupsInsightResult):
+    """Results from loose images analysis.
+
+    Groups contain loose images that could be moved to asset catalogs.
+    """
+
+    pass
+
+
+class MainBinaryExportMetadataResult(FilesInsightResult):
+    """Results from main binary exported symbols metadata analysis.
+
+    Files contain main binaries with export metadata that could be reduced.
+    """
+
+    pass
+
+
+class OptimizableImageFile(BaseModel):
+    """Information about an image file that can be optimized."""
 
     model_config = ConfigDict(frozen=True)
 
-    filename: str = Field(..., description="The filename (without path)")
-    files: List[FileInfo] = Field(..., description="All duplicate files with this filename")
-    total_savings: int = Field(..., ge=0, description="Total savings for this filename group")
+    file_path: str = Field(..., description="File path")
+    current_size: int = Field(..., description="Current file size in bytes")
+
+    # Minification savings (optimizing current format)
+    minify_savings: int = Field(default=0, ge=0, description="Potential savings from minification")
+    minified_size: int | None = Field(default=None, description="Size after minification")
+
+    # HEIC conversion savings (converting to HEIC format)
+    conversion_savings: int = Field(default=0, ge=0, description="Potential savings from HEIC conversion")
+    heic_size: int | None = Field(default=None, description="Size after HEIC conversion")
 
     @property
-    def duplicate_count(self) -> int:
-        """Number of duplicate files (excluding the original)."""
-        return len(self.files) - 1
-
-
-class DuplicateFilesInsightResult(BaseInsightResult):
-    """Results from duplicate files analysis."""
-
-    groups: List[DuplicateFileGroup] = Field(..., description="Groups of duplicate files by filename")
+    def potential_savings(self) -> int:
+        """Calculate total potential savings from the best optimization."""
+        return max(self.minify_savings, self.conversion_savings)
 
     @property
-    def duplicate_count(self) -> int:
-        """Total number of duplicate files across all groups."""
-        return sum(group.duplicate_count for group in self.groups)
-
-    @property
-    def total_files(self) -> int:
-        """Total number of files across all groups."""
-        return sum(len(group.files) for group in self.groups)
-
-
-class LargeImageFileInsightResult(BaseInsightResult):
-    """Results from large image files analysis."""
-
-    files: List[FileSavingsResult] = Field(..., description="Image files larger than 10MB with their sizes")
+    def best_optimization_type(self) -> str:
+        """Return the optimization type that provides the most savings."""
+        if self.conversion_savings > self.minify_savings:
+            return "convert_to_heic"
+        elif self.minify_savings > 0:
+            return "minify"
+        else:
+            return "none"
 
 
-class LargeVideoFileInsightResult(BaseInsightResult):
-    """Results from large video files analysis."""
+class ImageOptimizationInsightResult(BaseInsightResult):
+    """Results from image optimization analysis."""
 
-    files: List[FileSavingsResult] = Field(..., description="Video files larger than 10MB with their sizes")
-
-
-class LargeAudioFileInsightResult(BaseInsightResult):
-    """Results from large audio files analysis."""
-
-    files: List[FileSavingsResult] = Field(..., description="Audio files larger than 5MB with their sizes")
+    optimizable_files: List[OptimizableImageFile] = Field(
+        ..., description="Files that can be optimized with potential savings"
+    )
 
 
-class HermesDebugInfoInsightResult(BaseInsightResult):
-    """Results from Hermes debug info analysis."""
+class StripBinaryFileInfo(BaseModel):
+    """Savings information from stripping a Mach-O binary."""
 
-    files: List[FileSavingsResult] = Field(..., description="Hermes bytecode files with potential debug info savings")
+    file_path: str = Field(..., description="Path to the binary file within the app bundle")
+    debug_sections_savings: int = Field(..., ge=0, description="Savings from removing debug sections")
+    symbol_table_savings: int = Field(..., ge=0, description="Savings from removing symbol table")
+    total_savings: int = Field(..., ge=0, description="Total potential savings in bytes from stripping debug content")
 
 
-class UnnecessaryFilesInsightResult(BaseInsightResult):
-    """Results from unnecessary files analysis."""
+class StripBinaryInsightResult(BaseInsightResult):
+    """Results from strip binary analysis."""
 
-    files: List[FileSavingsResult] = Field(..., description="Unnecessary files with their sizes that could be removed")
+    files: List[StripBinaryFileInfo] = Field(..., description="Files that could save size by stripping the binary")
+    total_debug_sections_savings: int = Field(..., ge=0, description="Total potential savings from debug sections")
+    total_symbol_table_savings: int = Field(..., ge=0, description="Total potential savings from symbol tables")
