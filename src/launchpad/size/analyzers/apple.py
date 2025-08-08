@@ -30,11 +30,12 @@ from launchpad.size.insights.apple.main_binary_export_metadata import (
 from launchpad.size.insights.apple.small_files import SmallFilesInsight
 from launchpad.size.insights.apple.strip_symbols import StripSymbolsInsight
 from launchpad.size.insights.apple.unnecessary_files import UnnecessaryFilesInsight
+from launchpad.size.insights.common.audio_compression import AudioCompressionInsight
 from launchpad.size.insights.common.duplicate_files import DuplicateFilesInsight
 from launchpad.size.insights.common.hermes_debug_info import HermesDebugInfoInsight
-from launchpad.size.insights.common.large_audios import LargeAudioFileInsight
 from launchpad.size.insights.common.large_images import LargeImageFileInsight
 from launchpad.size.insights.common.large_videos import LargeVideoFileInsight
+from launchpad.size.insights.common.video_compression import VideoCompressionInsight
 from launchpad.size.insights.insight import InsightsInput
 from launchpad.size.treemap.treemap_builder import TreemapBuilder
 from launchpad.size.utils.apple_bundle_size import calculate_bundle_sizes
@@ -169,7 +170,6 @@ class AppleAppAnalyzer:
                 duplicate_files=self._generate_insight_with_tracing(
                     DuplicateFilesInsight, insights_input, "duplicate_files"
                 ),
-                large_audio=self._generate_insight_with_tracing(LargeAudioFileInsight, insights_input, "large_audio"),
                 large_images=self._generate_insight_with_tracing(LargeImageFileInsight, insights_input, "large_images"),
                 large_videos=self._generate_insight_with_tracing(LargeVideoFileInsight, insights_input, "large_videos"),
                 strip_binary=self._generate_insight_with_tracing(StripSymbolsInsight, insights_input, "strip_binary"),
@@ -192,6 +192,12 @@ class AppleAppAnalyzer:
                 ),
                 unnecessary_files=self._generate_insight_with_tracing(
                     UnnecessaryFilesInsight, insights_input, "unnecessary_files"
+                ),
+                audio_compression=self._generate_insight_with_tracing(
+                    AudioCompressionInsight, insights_input, "audio_compression"
+                ),
+                video_compression=self._generate_insight_with_tracing(
+                    VideoCompressionInsight, insights_input, "video_compression"
                 ),
             )
 

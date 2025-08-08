@@ -205,3 +205,27 @@ class StripBinaryInsightResult(BaseInsightResult):
     files: List[StripBinaryFileInfo] = Field(..., description="Files that could save size by stripping the binary")
     total_debug_sections_savings: int = Field(..., ge=0, description="Total potential savings from debug sections")
     total_symbol_table_savings: int = Field(..., ge=0, description="Total potential savings from symbol tables")
+
+
+class AudioCompressionInsightResult(FilesInsightResult):
+    """Results from audio compression analysis.
+
+    Files contain audio files that can be compressed with their potential savings.
+    """
+
+    pass
+
+
+class VideoCompressionFileSavingsResult(FileSavingsResult):
+    """Information about a video file that can be compressed."""
+
+    recommended_codec: str = Field(..., description="Recommended codec (h264 or hevc)")
+
+
+class VideoCompressionInsightResult(BaseInsightResult):
+    """Results from video compression analysis.
+
+    Files contain video files that can be compressed with their potential savings.
+    """
+
+    files: List[VideoCompressionFileSavingsResult] = Field(..., description="Video files that can be compressed")

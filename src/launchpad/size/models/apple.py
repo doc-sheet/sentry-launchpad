@@ -16,10 +16,10 @@ from launchpad.parsers.apple.swift_symbol_type_aggregator import SwiftSymbolType
 
 from .common import BaseAnalysisResults, BaseAppInfo
 from .insights import (
+    AudioCompressionInsightResult,
     DuplicateFilesInsightResult,
     HermesDebugInfoInsightResult,
     ImageOptimizationInsightResult,
-    LargeAudioFileInsightResult,
     LargeImageFileInsightResult,
     LargeVideoFileInsightResult,
     LocalizedStringCommentsInsightResult,
@@ -29,6 +29,7 @@ from .insights import (
     SmallFilesInsightResult,
     StripBinaryInsightResult,
     UnnecessaryFilesInsightResult,
+    VideoCompressionInsightResult,
 )
 
 
@@ -142,7 +143,6 @@ class AppleInsightResults(BaseModel):
     duplicate_files: DuplicateFilesInsightResult | None = Field(None, description="Duplicate files analysis")
     large_images: LargeImageFileInsightResult | None = Field(None, description="Large image files analysis")
     large_videos: LargeVideoFileInsightResult | None = Field(None, description="Large video files analysis")
-    large_audio: LargeAudioFileInsightResult | None = Field(None, description="Large audio files analysis")
     strip_binary: StripBinaryInsightResult | None = Field(None, description="Strip binary analysis")
     localized_strings: LocalizedStringInsightResult | None = Field(None, description="Localized strings analysis")
     localized_strings_minify: LocalizedStringCommentsInsightResult | None = Field(
@@ -158,6 +158,8 @@ class AppleInsightResults(BaseModel):
         None, description="Main binary exported symbols analysis"
     )
     unnecessary_files: UnnecessaryFilesInsightResult | None = Field(None, description="Unnecessary files analysis")
+    audio_compression: AudioCompressionInsightResult | None = Field(None, description="Audio compression analysis")
+    video_compression: VideoCompressionInsightResult | None = Field(None, description="Video compression analysis")
 
 
 @dataclass
