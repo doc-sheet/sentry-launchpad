@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.alias_generators import to_camel
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
-from requests.exceptions import JSONDecodeError
+from requests.exceptions import ChunkedEncodingError, ConnectionError, ContentDecodingError, JSONDecodeError, Timeout
 from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
@@ -161,25 +161,38 @@ class SentryClient:
         """
         endpoint = f"/api/0/internal/{org}/{project}/files/preprodartifacts/{artifact_id}/"
         url = self._build_url(endpoint)
-
-        response = self.session.get(url, auth=self.auth, timeout=120, stream=True)
-
-        if response.status_code != 200:
-            raise SentryClientError(response=response)
-
-        # Stream directly to the file-like object
         file_size = 0
-        chunk_count = 0
 
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                chunk_count += 1
+        for attempt in range(2):
+            try:
+                response = self.session.get(url, auth=self.auth, timeout=120, stream=True)
+                if response.status_code != 200:
+                    raise SentryClientError(response=response)
 
-                out.write(chunk)
-                file_size += len(chunk)
+                file_size = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        out.write(chunk)
+                        file_size += len(chunk)
 
-                if file_size > 5 * 1024 * 1024 * 1024:  # 5GB limit
-                    raise RuntimeError("Failed to download artifact (client_error): File size exceeds 5GB limit")
+                        if file_size > 5 * 1024 * 1024 * 1024:  # 5GB limit
+                            raise RuntimeError(
+                                "Failed to download artifact (client_error): File size exceeds 5GB limit"
+                            )
+                if attempt > 0:
+                    logger.info(f"Download retry succeeded on attempt {attempt + 1}")
+                break
+
+            except (ConnectionError, Timeout, ChunkedEncodingError, ContentDecodingError) as e:
+                if attempt == 0:
+                    logger.warning(f"Download failed due to network error: {e} - retrying once")
+                    continue
+                else:
+                    logger.error(f"Download failed after retry due to network error: {e}")
+                    raise RuntimeError(f"Failed to download artifact (network_error): {e}")
+            except Exception as e:
+                logger.error(f"Download failed due to unexpected error: {e}")
+                raise e
 
         return file_size
 
