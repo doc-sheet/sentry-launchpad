@@ -1,12 +1,49 @@
 """Logging utilities for app size analyzer."""
 
+import json
 import logging
 import sys
+
+from datetime import datetime, timezone
+from typing import Any, Dict
 
 from rich.console import Console
 from rich.logging import RichHandler
 
 from launchpad.tracing import RequestLogFilter
+
+# Standard LogRecord attributes to exclude from extra fields
+STANDARD_LOG_ATTRS = {
+    "name",
+    "msg",
+    "args",
+    "levelname",
+    "levelno",
+    "pathname",
+    "filename",
+    "module",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
+    "getMessage",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "message",
+    "taskName",
+    "asctime",
+}
+
+
+def get_extra_fields(record: logging.LogRecord) -> Dict[str, Any]:
+    """Extract extra fields from a log record, excluding standard LogRecord attributes."""
+    return {k: v for k, v in record.__dict__.items() if k not in STANDARD_LOG_ATTRS and not k.startswith("_")}
 
 
 class StructuredRichHandler(RichHandler):
@@ -15,34 +52,7 @@ class StructuredRichHandler(RichHandler):
     def format(self, record: logging.LogRecord) -> str:
         message = super().format(record)
 
-        # Default attributes to ignore
-        standard_attrs = {
-            "name",
-            "msg",
-            "args",
-            "levelname",
-            "levelno",
-            "pathname",
-            "filename",
-            "module",
-            "lineno",
-            "funcName",
-            "created",
-            "msecs",
-            "relativeCreated",
-            "thread",
-            "threadName",
-            "processName",
-            "process",
-            "getMessage",
-            "exc_info",
-            "exc_text",
-            "stack_info",
-            "message",
-            "taskName",
-        }
-
-        extras = {k: v for k, v in record.__dict__.items() if k not in standard_attrs and not k.startswith("_")}
+        extras = get_extra_fields(record)
 
         if extras:
             extra_parts = []
@@ -53,6 +63,31 @@ class StructuredRichHandler(RichHandler):
                 message += f" [dim]|[/dim] {' '.join(extra_parts)}"
 
         return message
+
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging in production environments."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry: Dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        extra_fields = get_extra_fields(record)
+        if extra_fields:
+            log_entry.update(extra_fields)
+
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+
+        try:
+            return json.dumps(log_entry, default=str, ensure_ascii=False)
+        except (TypeError, ValueError):
+            log_entry["message"] = str(record.getMessage())
+            return json.dumps(log_entry, default=str, ensure_ascii=False)
 
 
 def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
@@ -90,14 +125,13 @@ def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
             handlers=[handler],
         )
     else:
-        # Fall back to standard logging for non-terminal environments
-        # (e.g., when output is redirected to a file or sent to Datadog)
+        # Use JSON formatting for non-terminal environments (e.g., GCP logs)
         handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JSONFormatter())
         handler.addFilter(RequestLogFilter())
 
         logging.basicConfig(
             level=level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             handlers=[handler],
         )
 
