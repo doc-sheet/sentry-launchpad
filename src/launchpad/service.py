@@ -135,6 +135,10 @@ class LaunchpadService:
         project_id = payload["project_id"]
         organization_id = payload["organization_id"]
 
+        if self._service_config and project_id in self._service_config.projects_to_skip:
+            logger.info(f"Skipping processing for project {project_id}")
+            return
+
         with request_context():
             with sentry_sdk.new_scope() as scope:
                 scope.set_tag("launchpad.project_id", project_id)
@@ -535,16 +539,21 @@ class ServiceConfig:
     """Service configuration data."""
 
     sentry_base_url: str
+    projects_to_skip: list[str]
 
 
 def get_service_config() -> ServiceConfig:
     """Get service configuration from environment."""
     sentry_base_url = os.getenv("SENTRY_BASE_URL")
+    projects_to_skip_str = os.getenv("PROJECT_IDS_TO_SKIP")
+    projects_to_skip = projects_to_skip_str.split(",") if projects_to_skip_str else []
+
     if sentry_base_url is None:
         sentry_base_url = "http://getsentry.default"
 
     return ServiceConfig(
         sentry_base_url=sentry_base_url,
+        projects_to_skip=projects_to_skip,
     )
 
 
