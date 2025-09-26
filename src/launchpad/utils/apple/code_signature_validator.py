@@ -111,7 +111,7 @@ class CodeSignatureValidator:
             return len(errors) == 0, errors
 
         except Exception as e:
-            logger.exception("Failed to validate code signature")
+            logger.warning("Failed to validate code signature", exc_info=True)
             return False, [str(e)]
 
     def _validate_executable(self) -> BinaryCheckResult:
@@ -214,8 +214,8 @@ class CodeSignatureValidator:
                     # For regular files, read the file contents
                     with open(full_file_path, "rb") as f:
                         file_buffer = f.read()
-            except Exception as e:
-                logger.error(f"Failed to read file {file_path}: {e}")
+            except Exception:
+                logger.exception(f"Failed to read file {file_path}")
                 errors.append(f"file modified: {file_path}")
                 return
 
@@ -300,7 +300,7 @@ class CodeSignatureValidator:
                 bytes = f.read()
                 return self._get_buffer_hash(bytes)
         except Exception as e:
-            raise RuntimeError(f"Failed to parse file: {e}")
+            raise RuntimeError(f"Failed to parse file {file_path}") from e
 
     def _get_buffer_hash(self, buffer: bytes) -> str:
         """Get buffer hash."""
