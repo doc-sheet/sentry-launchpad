@@ -6,9 +6,11 @@ import io
 import pytest
 import responses
 
+from requests.exceptions import ConnectionError
 from responses.matchers import multipart_matcher
 
 from launchpad.sentry_client import (
+    RETRY_ATTEMPTS,
     ChunkOptionsResponse,
     SentryClient,
     SentryClientError,
@@ -278,8 +280,165 @@ class TestSentryClientRetry:
                 f,
             )
         assert "failed after 3 attempts" in str(excinfo.value)
-        # We assemble once to find out the missing chunks
-        # We then retry the assemble 3 times uploading any missing chunks
-        # Each request can itself be retried 3 times
-        # So (1*3)*4 = 16
         assert upload.call_count == 16
+
+    @responses.activate
+    def test_download_artifact_success(self):
+        """Test successful download of artifact."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "40"},
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body=b"A" * 20 + b"B" * 20,
+        )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+
+        result = client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+        assert result == 40
+        out.seek(0)
+        assert out.read() == b"A" * 20 + b"B" * 20
+
+    @responses.activate
+    def test_download_artifact_with_retry(self):
+        """Test download with retry after connection error."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "13"},
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body=ConnectionError("Connection failed"),
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body=b"Hello, world!",
+        )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+
+        result = client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+        assert result == 13
+        out.seek(0)
+        assert out.read() == b"Hello, world!"
+
+    @responses.activate
+    def test_download_artifact_resumable(self):
+        """Test download retry behavior (full restart, not true resumable)."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "26"},
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body=ConnectionError("Connection lost"),
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body=b"Hello, world! How are you?",
+        )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+
+        result = client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+        assert result == 26
+        out.seek(0)
+        assert out.read() == b"Hello, world! How are you?"
+
+    @responses.activate
+    def test_download_artifact_http_error(self):
+        """Test download with HTTP error response."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "13"},
+        )
+
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            status=404,
+        )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+
+        with pytest.raises(SentryClientError):
+            client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+    @responses.activate
+    def test_download_artifact_max_retries_exceeded(self):
+        """Test download fails after maximum retries."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "13"},
+        )
+
+        for _ in range(RETRY_ATTEMPTS):
+            responses.add(
+                responses.GET,
+                "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+                body=ConnectionError("Connection failed"),
+            )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+
+        with pytest.raises(SentryClientError) as excinfo:
+            client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+        assert "Download failed after retries" in str(excinfo.value)
+
+    @responses.activate
+    def test_download_artifact_handles_416_range_not_satisfiable(self):
+        """Test download handles 416 Range Not Satisfiable by restarting from beginning."""
+        responses.add(
+            responses.HEAD,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            headers={"Content-Length": "13"},
+        )
+
+        # First request returns 416, second succeeds
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            status=416,
+        )
+        responses.add(
+            responses.GET,
+            "https://example.com/api/0/internal/test-org/test-project/files/preprodartifacts/test-artifact/",
+            body="Hello, world!",
+        )
+
+        client = SentryClient(base_url="https://example.com", shared_secret="password")
+        out = io.BytesIO()
+        out.write(b"partial")  # Simulate partial download
+        out.seek(0, io.SEEK_END)
+
+        result = client.download_artifact("test-org", "test-project", "test-artifact", out)
+
+        assert result == 13
+        out.seek(0)
+        assert out.read() == b"Hello, world!"
