@@ -341,15 +341,9 @@ class ZippedXCArchive(AppleArtifact):
         is_vector = item.get("vector", False)
         filename = item.get("filename", "")
 
-        # Enhanced asset type handling
-        if asset_type == 1:  # Standard PNG image
-            full_path = parent_path / f"{image_id}.png"
-        elif asset_type == 2:  # JPEG image
-            full_path = parent_path / f"{image_id}.jpg"
-        elif asset_type == 3:  # PDF/Vector image
-            full_path = parent_path / f"{image_id}.pdf"
-        elif asset_type == 4:  # HEIF image
-            full_path = parent_path / f"{image_id}.heic"
+        if filename and Path(filename).suffix.lower() in {".png", ".jpg", ".jpeg", ".heic", ".heif"}:
+            potential_path = parent_path / f"{image_id}.png"
+            full_path = potential_path if potential_path.exists() else None
         else:
             full_path = None
 
