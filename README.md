@@ -36,13 +36,6 @@ devservices down
 
 ## Usage
 
-### Analyze an Android App
-
-```bash
-
-# Analyze an apk with a custom output location
-```
-
 ### Testing Kafka Integration
 
 - `GET /health` - Basic health check
