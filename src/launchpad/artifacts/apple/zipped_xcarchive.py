@@ -80,6 +80,11 @@ class ZippedXCArchive(AppleArtifact):
         except Exception as e:
             raise RuntimeError("Failed to parse Info.plist") from e
 
+    def get_app_icon(self) -> bytes | None:
+        # TODO(EME-462): Implement app icon extraction for Apple artifacts
+        logger.info("App icon not yet implemented for Apple artifacts")
+        return None
+
     def get_icon_info(self) -> tuple[str | None, list[str]]:
         """Extract primary and alternate icon names from Info.plist.
 
