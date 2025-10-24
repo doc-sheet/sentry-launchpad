@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import List
 
 from launchpad.artifacts.apple.zipped_xcarchive import ZippedXCArchive
-from launchpad.parsers.apple.macho_symbol_sizes import MachOSymbolSizes, SymbolSize
-from launchpad.parsers.apple.swift_symbol_type_aggregator import SwiftSymbolTypeAggregator
+from launchpad.size.symbols.macho_symbol_sizes import MachOSymbolSizes, SymbolSize
+from launchpad.size.symbols.swift_aggregator import SwiftSymbolTypeAggregator
 
 
 def create_symbol_sizes_from_xcarchive(xcarchive_path: Path) -> List[SymbolSize]:

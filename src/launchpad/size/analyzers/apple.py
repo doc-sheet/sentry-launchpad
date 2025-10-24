@@ -20,9 +20,6 @@ from launchpad.artifacts.apple.zipped_xcarchive import BinaryInfo, ZippedXCArchi
 from launchpad.artifacts.artifact import AppleArtifact
 from launchpad.parsers.apple.dwarf_relocations_parser import DwarfRelocationsParser
 from launchpad.parsers.apple.macho_parser import MachOParser
-from launchpad.parsers.apple.macho_symbol_sizes import MachOSymbolSizes
-from launchpad.parsers.apple.objc_symbol_type_aggregator import ObjCSymbolTypeAggregator
-from launchpad.parsers.apple.swift_symbol_type_aggregator import SwiftSymbolTypeAggregator
 from launchpad.size.constants import APPLE_FILESYSTEM_BLOCK_SIZE
 from launchpad.size.hermes.utils import make_hermes_reports
 from launchpad.size.insights.apple.alternate_icons_optimization import AlternateIconsOptimizationInsight
@@ -39,6 +36,7 @@ from launchpad.size.insights.common.hermes_debug_info import HermesDebugInfoInsi
 from launchpad.size.insights.common.large_images import LargeImageFileInsight
 from launchpad.size.insights.common.large_videos import LargeVideoFileInsight
 from launchpad.size.insights.insight import InsightsInput
+from launchpad.size.symbols.macho_symbol_sizes import MachOSymbolSizes
 from launchpad.size.treemap.treemap_builder import TreemapBuilder
 from launchpad.size.utils.apple_bundle_size import calculate_bundle_sizes
 from launchpad.size.utils.file_analysis import analyze_apple_files
@@ -446,13 +444,7 @@ class AppleAppAnalyzer:
             if dwarf_fat_binary:
                 dwarf_binary = dwarf_fat_binary.at(0)
                 symbol_sizes = MachOSymbolSizes(dwarf_binary).get_symbol_sizes()
-                symbol_info = SymbolInfo(
-                    symbol_sizes=symbol_sizes,
-                    swift_type_groups=SwiftSymbolTypeAggregator().aggregate_symbols(symbol_sizes),
-                    objc_type_groups=ObjCSymbolTypeAggregator().aggregate_symbols(symbol_sizes),
-                    static_inits=static_inits,
-                    strippable_symbols_size=strippable_symbols_size,
-                )
+                symbol_info = SymbolInfo.from_symbol_sizes(symbol_sizes=symbol_sizes)
             else:
                 logger.error(
                     "size.apple.skip_symbol_analysis.dwarf_binary_parse_failed",
@@ -469,14 +461,6 @@ class AppleAppAnalyzer:
                         f"Parsed {len(dwarf_relocations.relocations)} DWARF relocations for {binary_info.name}"
                     )
         else:
-            if strippable_symbols_size > 0:
-                symbol_info = SymbolInfo(
-                    symbol_sizes=[],
-                    swift_type_groups=[],
-                    objc_type_groups=[],
-                    static_inits=static_inits,
-                    strippable_symbols_size=strippable_symbols_size,
-                )
             logger.info(
                 "size.apple.skip_symbol_analysis.no_dwarf_binary",
                 extra={
@@ -505,6 +489,8 @@ class AppleAppAnalyzer:
             header_size=parser.get_header_size(),
             dyld_info=dyld_info,
             dwarf_relocations=dwarf_relocations,
+            static_inits=static_inits,
+            strippable_symbols_size=strippable_symbols_size,
         )
 
     @sentry_sdk.trace
