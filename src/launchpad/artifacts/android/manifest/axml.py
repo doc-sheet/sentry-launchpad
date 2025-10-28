@@ -1,11 +1,9 @@
-"""Utilities for parsing Android binary XML format."""
-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, List, Sequence
+from typing import Any
 
 from launchpad.parsers.android.binary.android_binary_parser import AndroidBinaryParser
+from launchpad.parsers.android.binary.types import XmlAttribute, XmlNode
 from launchpad.utils.logging import get_logger
 
 from ..resources.binary import BinaryResourceTable
@@ -14,41 +12,11 @@ from .manifest import AndroidApplication, AndroidManifest
 logger = get_logger(__name__)
 
 
-@dataclass
-class XmlAttribute:
-    """Represents an XML attribute in binary format."""
-
-    name: str
-    value: str | None
-    typed_value: Any | None = None
-
-
-@dataclass
-class XmlNode:
-    """Represents an XML node in binary format."""
-
-    node_name: str
-    attributes: Sequence[XmlAttribute]
-    child_nodes: Sequence[XmlNode]
-
-
 class BinaryXmlParser:
-    """Parser for Android binary XML format."""
-
     def __init__(self, buffer: bytes) -> None:
-        """Initialize parser with binary buffer.
-
-        Args:
-            buffer: Raw bytes of the binary XML file
-        """
         self.buffer = buffer
 
     def parse_xml(self) -> XmlNode | None:
-        """Parse the binary XML into a tree of nodes.
-
-        Returns:
-            Root XML node if parsing successful, None otherwise
-        """
         try:
             parser = AndroidBinaryParser(self.buffer)
             parsed_node = parser.parse_xml()
@@ -59,7 +27,7 @@ class BinaryXmlParser:
 
             # Convert the parser's XmlNode to our model's XmlNode
             def convert_node(node: Any) -> XmlNode:  # type: ignore[no-untyped-def]
-                attributes: List[XmlAttribute] = []
+                attributes: list[XmlAttribute] = []
                 for attr in node.attributes:
                     value = attr.value
                     typed_value = attr.typed_value
@@ -69,12 +37,12 @@ class BinaryXmlParser:
                         if typed_value.type == "reference":
                             # Resource references will be resolved later by AxmlUtils
                             value = typed_value.value
-                        elif typed_value.type in ["int_dec", "boolean"]:
+                        elif typed_value.type in ["int_dec", "int_hex", "boolean"]:
                             value = str(typed_value.value)
                         elif typed_value.type == "dimension":
                             value = f"{typed_value.value.value}{typed_value.value.unit}"
-                        elif typed_value.type in ["rgb8", "argb8"]:
-                            value = f"#{typed_value.value:x}"
+                        elif typed_value.type in ["rgb8", "argb8", "rgb4", "argb4"]:
+                            value = typed_value.value
                         elif typed_value.type == "string":
                             value = typed_value.value
                         elif typed_value.type == "unknown":
@@ -84,12 +52,23 @@ class BinaryXmlParser:
                             float_view = struct.unpack("<f", struct.pack("<I", typed_value.value))[0]
                             value = str(float_view)
 
-                    attributes.append(XmlAttribute(name=attr.name, value=value, typed_value=typed_value))
+                    attributes.append(
+                        XmlAttribute(
+                            namespace_uri=attr.namespace_uri,
+                            name=attr.name,
+                            node_name=attr.node_name,
+                            node_type=attr.node_type,
+                            value=value,
+                            typed_value=typed_value,
+                        )
+                    )
 
                 # Recursively convert child nodes
                 child_nodes = [convert_node(child) for child in node.child_nodes]
 
                 return XmlNode(
+                    namespace_uri=node.namespace_uri,
+                    node_type=node.node_type,
                     node_name=node.node_name,
                     attributes=attributes,
                     child_nodes=child_nodes,
@@ -107,20 +86,8 @@ class AxmlUtils:
 
     @staticmethod
     def binary_xml_to_android_manifest(
-        buffer: bytes, binary_resource_tables: List[BinaryResourceTable]
+        buffer: bytes, binary_resource_tables: list[BinaryResourceTable]
     ) -> AndroidManifest:
-        """Convert binary XML buffer to AndroidManifest.
-
-        Args:
-            buffer: Raw bytes of the binary XML file
-            binary_resource_tables: List of resource tables for resolving references
-
-        Returns:
-            Parsed Android manifest
-
-        Raises:
-            ValueError: If manifest cannot be parsed or required fields are missing
-        """
         xml_node = BinaryXmlParser(buffer).parse_xml()
         if not xml_node:
             raise ValueError("Could not load binary manifest for APK")
@@ -202,20 +169,10 @@ class AxmlUtils:
 
     @staticmethod
     def get_optional_attr_value(
-        attributes: Sequence[XmlAttribute],
+        attributes: list[XmlAttribute],
         name: str,
-        binary_res_tables: List[BinaryResourceTable],
+        binary_res_tables: list[BinaryResourceTable],
     ) -> str | None:
-        """Get optional attribute value, resolving resource references if needed.
-
-        Args:
-            attributes: List of XML attributes
-            name: Name of attribute to find
-            binary_res_tables: List of resource tables for resolving references
-
-        Returns:
-            Attribute value if found and resolved, None otherwise
-        """
         attribute = next((attr for attr in attributes if attr.name == name), None)
 
         if not attribute:
@@ -238,14 +195,12 @@ class AxmlUtils:
                 return str(typed_value.value)
             elif typed_value.type == "reference":
                 return AxmlUtils.get_resource_from_binary_resource_files(typed_value.value, binary_res_tables)
-            elif typed_value.type == "int_dec":
+            elif typed_value.type in ["int_dec", "int_hex", "boolean"]:
                 return str(typed_value.value)
             elif typed_value.type == "dimension":
                 return f"{typed_value.value.value}{typed_value.value.unit}"
-            elif typed_value.type in ["rgb8", "argb8"]:
-                return f"#{typed_value.value:x}"
-            elif typed_value.type == "boolean":
-                return str(typed_value.value)
+            elif typed_value.type in ["rgb8", "argb8", "rgb4", "argb4"]:
+                value = typed_value.value
             elif typed_value.type == "unknown":
                 # Convert IEEE 754 integer representation to float
                 import struct
@@ -264,39 +219,17 @@ class AxmlUtils:
 
     @staticmethod
     def get_required_attr_value(
-        attributes: Sequence[XmlAttribute],
+        attributes: list[XmlAttribute],
         name: str,
-        binary_res_tables: List[BinaryResourceTable],
+        binary_res_tables: list[BinaryResourceTable],
     ) -> str:
-        """Get required attribute value, raising error if not found.
-
-        Args:
-            attributes: List of XML attributes
-            name: Name of attribute to find
-            binary_res_tables: List of resource tables for resolving references
-
-        Returns:
-            Attribute value if found and resolved
-
-        Raises:
-            ValueError: If attribute not found or cannot be resolved
-        """
         value = AxmlUtils.get_optional_attr_value(attributes, name, binary_res_tables)
         if value is None:
             raise ValueError(f"Missing required attribute: {name}")
         return value
 
     @staticmethod
-    def get_resource_from_binary_resource_files(value: str, binary_res_tables: List[BinaryResourceTable]) -> str | None:
-        """Get resource value from binary resource tables.
-
-        Args:
-            value: Resource ID string (e.g. "resourceId:0x7f010001")
-            binary_res_tables: List of resource tables to search
-
-        Returns:
-            Resolved resource value if found, None otherwise
-        """
+    def get_resource_from_binary_resource_files(value: str, binary_res_tables: list[BinaryResourceTable]) -> str | None:
         # Try each table until we find a value
         for table in binary_res_tables:
             try:
