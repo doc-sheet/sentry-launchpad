@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-import lief
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from launchpad.parsers.apple.dwarf_relocations_parser import DwarfRelocationsData
@@ -19,6 +17,7 @@ from .insights import (
     DuplicateFilesInsightResult,
     HermesDebugInfoInsightResult,
     ImageOptimizationInsightResult,
+    LargeAudioFileInsightResult,
     LargeImageFileInsightResult,
     LargeVideoFileInsightResult,
     LocalizedStringCommentsInsightResult,
@@ -32,16 +31,11 @@ from .insights import (
 
 
 class AppleAnalysisResults(BaseAnalysisResults):
-    """Complete Apple analysis results."""
+    """Apple analysis results."""
 
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(frozen=True)
 
     app_info: AppleAppInfo = Field(..., description="Apple app information")
-    binary_analysis: List[MachOBinaryAnalysis] = Field(
-        default_factory=list,
-        description="Apple binary analysis results",
-        exclude=True,
-    )
     insights: AppleInsightResults | None = Field(
         description="Generated insights from the analysis",
     )
@@ -74,6 +68,36 @@ class AppleAppInfo(BaseAppInfo):
     )
     missing_dsym_binaries: List[str] = Field(
         default_factory=list, description="List of binary names that don't have corresponding dSYM files"
+    )
+
+
+class AppleInsightResults(BaseModel):
+    """Collection of all insight results."""
+
+    model_config = ConfigDict(frozen=True)
+
+    duplicate_files: DuplicateFilesInsightResult | None = Field(None, description="Duplicate files analysis")
+    large_images: LargeImageFileInsightResult | None = Field(None, description="Large image files analysis")
+    large_audios: LargeAudioFileInsightResult | None = Field(None, description="Large audio files analysis")
+    large_videos: LargeVideoFileInsightResult | None = Field(None, description="Large video files analysis")
+    strip_binary: StripBinaryInsightResult | None = Field(None, description="Strip binary analysis")
+    localized_strings_minify: LocalizedStringCommentsInsightResult | None = Field(
+        None, description="Localized strings comments analysis"
+    )
+    small_files: SmallFilesInsightResult | None = Field(None, description="Small files analysis")
+    loose_images: LooseImagesInsightResult | None = Field(
+        None, description="Loose images not in asset catalogs analysis"
+    )
+    hermes_debug_info: HermesDebugInfoInsightResult | None = Field(None, description="Hermes debug info analysis")
+    image_optimization: ImageOptimizationInsightResult | None = Field(None, description="Image optimization analysis")
+    main_binary_exported_symbols: MainBinaryExportMetadataResult | None = Field(
+        None, description="Main binary exported symbols analysis"
+    )
+    unnecessary_files: UnnecessaryFilesInsightResult | None = Field(None, description="Unnecessary files analysis")
+    audio_compression: AudioCompressionInsightResult | None = Field(None, description="Audio compression analysis")
+    video_compression: VideoCompressionInsightResult | None = Field(None, description="Video compression analysis")
+    alternate_icons_optimization: ImageOptimizationInsightResult | None = Field(
+        None, description="Alternate app icons optimization analysis"
     )
 
 
@@ -121,17 +145,13 @@ class MachOBinaryAnalysis:
     architectures: List[str]
     linked_libraries: List[str]
     objc_method_names: List[str]
-    # Lief types cannot be used after the binary is closed
-    # so we need to extract the segment/section data into dataclasses
     segments: List[SegmentInfo]
     load_commands: List[LoadCommandInfo]
     swift_metadata: SwiftMetadata | None = None
-    # TODO(EME-432): remove lief types from this model so it's safe to use after the binary is closed
     symbol_info: SymbolInfo | None = None
     header_size: int = 0
     dyld_info: DyldInfo | None = None
     dwarf_relocations: DwarfRelocationsData | None = None
-    static_inits: List[lief.Symbol | str] | None = None
     strippable_symbols_size: int = 0
 
 
@@ -140,33 +160,3 @@ class SwiftMetadata:
     """Swift-specific metadata extracted from the binary."""
 
     protocol_conformances: List[str]
-
-
-class AppleInsightResults(BaseModel):
-    """Collection of all insight results."""
-
-    model_config = ConfigDict(frozen=True)
-
-    duplicate_files: DuplicateFilesInsightResult | None = Field(None, description="Duplicate files analysis")
-    large_images: LargeImageFileInsightResult | None = Field(None, description="Large image files analysis")
-    large_audios: LargeImageFileInsightResult | None = Field(None, description="Large audio files analysis")
-    large_videos: LargeVideoFileInsightResult | None = Field(None, description="Large video files analysis")
-    strip_binary: StripBinaryInsightResult | None = Field(None, description="Strip binary analysis")
-    localized_strings_minify: LocalizedStringCommentsInsightResult | None = Field(
-        None, description="Localized strings comments analysis"
-    )
-    small_files: SmallFilesInsightResult | None = Field(None, description="Small files analysis")
-    loose_images: LooseImagesInsightResult | None = Field(
-        None, description="Loose images not in asset catalogs analysis"
-    )
-    hermes_debug_info: HermesDebugInfoInsightResult | None = Field(None, description="Hermes debug info analysis")
-    image_optimization: ImageOptimizationInsightResult | None = Field(None, description="Image optimization analysis")
-    main_binary_exported_symbols: MainBinaryExportMetadataResult | None = Field(
-        None, description="Main binary exported symbols analysis"
-    )
-    unnecessary_files: UnnecessaryFilesInsightResult | None = Field(None, description="Unnecessary files analysis")
-    audio_compression: AudioCompressionInsightResult | None = Field(None, description="Audio compression analysis")
-    video_compression: VideoCompressionInsightResult | None = Field(None, description="Video compression analysis")
-    alternate_icons_optimization: ImageOptimizationInsightResult | None = Field(
-        None, description="Alternate app icons optimization analysis"
-    )
