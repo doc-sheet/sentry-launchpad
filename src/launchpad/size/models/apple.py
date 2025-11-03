@@ -127,11 +127,29 @@ class LoadCommandInfo:
 
 
 @dataclass
-class DyldInfo:
-    """DYLD-specific information extracted from related DYLD load commands."""
+class LinkEditInfo:
+    """Link edit segment components extracted from various load commands in __LINKEDIT.
 
+    Consolidates all __LINKEDIT segment data including symbol tables, DYLD info, and code signature.
+    """
+
+    # Segment
+    segment_size: int = 0
+
+    # Symbol tables (from LC_SYMTAB)
+    symbol_table_size: int = 0
+    string_table_size: int = 0
+
+    # Debugging (from LC_FUNCTION_STARTS)
+    function_starts_size: int = 0
+
+    # DYLD (from LC_DYLD_CHAINED_FIXUPS, LC_DYLD_EXPORTS_TRIE)
     chained_fixups_size: int = 0
     export_trie_size: int = 0
+
+    # Code signing (from LC_CODE_SIGNATURE)
+    code_signature_size: int = 0
+    code_signature_offset: int = 0
 
 
 @dataclass
@@ -150,9 +168,9 @@ class MachOBinaryAnalysis:
     swift_metadata: SwiftMetadata | None = None
     symbol_info: SymbolInfo | None = None
     header_size: int = 0
-    dyld_info: DyldInfo | None = None
     dwarf_relocations: DwarfRelocationsData | None = None
     strippable_symbols_size: int = 0
+    linkedit_info: LinkEditInfo | None = None
 
 
 @dataclass

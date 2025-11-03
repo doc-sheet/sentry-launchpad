@@ -435,11 +435,11 @@ class MachOElementBuilder(TreemapElementBuilder):
                         )
                     )
 
-            dyld_children_size = 0
+            linkedit_children_size = 0
             if segment_name == "__LINKEDIT":
-                dyld_children = self._build_dyld_load_command_children(binary_analysis)
-                segment_children.extend(dyld_children)
-                dyld_children_size = sum(c.size for c in dyld_children)
+                linkedit_children = self._build_linkedit_children(binary_analysis)
+                segment_children.extend(linkedit_children)
+                linkedit_children_size = sum(c.size for c in linkedit_children)
 
             displayed_section_size = sum(c.size for c in segment_children)
 
@@ -448,7 +448,7 @@ class MachOElementBuilder(TreemapElementBuilder):
                 seg_total_size = segment.size
 
             total_section_declared = sum(s.size for s in segment.sections) if segment.sections else 0
-            segment_overhead = seg_total_size - total_section_declared - dyld_children_size
+            segment_overhead = seg_total_size - total_section_declared - linkedit_children_size
             actual_segment_size = displayed_section_size + max(0, segment_overhead)
 
             if actual_segment_size > 0:
@@ -503,17 +503,60 @@ class MachOElementBuilder(TreemapElementBuilder):
 
         return metadata_children
 
-    def _build_dyld_load_command_children(self, binary_analysis: MachOBinaryAnalysis) -> List[TreemapElement]:
-        dyld_children: List[TreemapElement] = []
-        di = binary_analysis.dyld_info
-        if di is None:
-            return dyld_children
+    def _build_linkedit_children(self, binary_analysis: MachOBinaryAnalysis) -> List[TreemapElement]:
+        """Build child elements for the __LINKEDIT segment.
 
-        if di.chained_fixups_size > 0:
-            dyld_children.append(
+        Includes symbol table, string table, function starts, DYLD info, and code signature.
+        """
+        linkedit_children: List[TreemapElement] = []
+
+        le = binary_analysis.linkedit_info
+        if le is None:
+            return linkedit_children
+
+        # Add symbol table and string table
+        if le.string_table_size > 0:
+            linkedit_children.append(
+                TreemapElement(
+                    name="String Table",
+                    size=le.string_table_size,
+                    type=TreemapType.EXECUTABLES,
+                    path=None,
+                    is_dir=False,
+                    children=[],
+                )
+            )
+
+        if le.symbol_table_size > 0:
+            linkedit_children.append(
+                TreemapElement(
+                    name="Symbol Table",
+                    size=le.symbol_table_size,
+                    type=TreemapType.EXECUTABLES,
+                    path=None,
+                    is_dir=False,
+                    children=[],
+                )
+            )
+
+        if le.function_starts_size > 0:
+            linkedit_children.append(
+                TreemapElement(
+                    name="Function Starts",
+                    size=le.function_starts_size,
+                    type=TreemapType.EXECUTABLES,
+                    path=None,
+                    is_dir=False,
+                    children=[],
+                )
+            )
+
+        # Add DYLD info
+        if le.chained_fixups_size > 0:
+            linkedit_children.append(
                 TreemapElement(
                     name="Chained Fixups",
-                    size=di.chained_fixups_size,
+                    size=le.chained_fixups_size,
                     type=TreemapType.DYLD,
                     path=None,
                     is_dir=False,
@@ -521,11 +564,11 @@ class MachOElementBuilder(TreemapElementBuilder):
                 )
             )
 
-        if di.export_trie_size > 0:
-            dyld_children.append(
+        if le.export_trie_size > 0:
+            linkedit_children.append(
                 TreemapElement(
                     name="Export Trie",
-                    size=di.export_trie_size,
+                    size=le.export_trie_size,
                     type=TreemapType.DYLD,
                     path=None,
                     is_dir=False,
@@ -533,7 +576,20 @@ class MachOElementBuilder(TreemapElementBuilder):
                 )
             )
 
-        return dyld_children
+        # Add code signature
+        if le.code_signature_size > 0:
+            linkedit_children.append(
+                TreemapElement(
+                    name="Code Signature",
+                    size=le.code_signature_size,
+                    type=TreemapType.CODE_SIGNATURE,
+                    path=None,
+                    is_dir=False,
+                    children=[],
+                )
+            )
+
+        return linkedit_children
 
     def _add_unmapped_region(self, binary_analysis: MachOBinaryAnalysis, binary_children: List[TreemapElement]) -> None:
         total_accounted = sum(c.size for c in binary_children)
