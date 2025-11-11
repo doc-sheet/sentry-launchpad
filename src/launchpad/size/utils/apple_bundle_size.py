@@ -8,7 +8,6 @@ from typing import Tuple
 
 import lzfse
 
-from launchpad.parsers.apple.macho_parser import MachOParser
 from launchpad.size.constants import APPLE_FILESYSTEM_BLOCK_SIZE
 from launchpad.utils.file_utils import get_file_size, to_nearest_block_size
 from launchpad.utils.logging import get_logger
@@ -28,14 +27,12 @@ def calculate_bundle_sizes(bundle_url: Path) -> Tuple[int, int]:
     install_size = _calculate_app_store_size(bundle_url)
     metadata_size = _zip_metadata_size_for_bundle(bundle_url)
     lzfse_size = _lzfse_content_size_for_bundle(bundle_url)
-    signature_size = _get_extra_code_signature_size(bundle_url)
-    download_size = metadata_size + lzfse_size + signature_size
+    download_size = metadata_size + lzfse_size
 
     logger.debug(
         f"Bundle size breakdown - "
         f"ZIP metadata: {metadata_size} bytes, "
         f"LZFSE content: {lzfse_size} bytes, "
-        f"Code signature: {signature_size} bytes, "
         f"Total download: {download_size} bytes, "
         f"Total install: {install_size} bytes"
     )
@@ -54,17 +51,7 @@ def _calculate_app_store_size(bundle_url: Path) -> int:
             continue
 
         file_count += 1
-
-        if file_path.is_file():
-            file_size = to_nearest_block_size(get_file_size(file_path), APPLE_FILESYSTEM_BLOCK_SIZE)
-
-            # Add extra code signature size for binaries without extensions
-            if not file_path.suffix and MachOParser.is_macho_binary(file_path):
-                file_size += _get_extra_code_signature_size(file_path)
-
-        else:
-            # Add directory size, they take up a little space for metadata
-            file_size = to_nearest_block_size(get_file_size(file_path), APPLE_FILESYSTEM_BLOCK_SIZE)
+        file_size = to_nearest_block_size(get_file_size(file_path), APPLE_FILESYSTEM_BLOCK_SIZE)
 
         total_size += file_size
         logger.debug(f"File size: {file_size}, Total size: {total_size}")
@@ -181,10 +168,3 @@ def _zip_metadata_size_for_bundle(bundle_url: Path) -> int:
             zip_file_path.unlink()
         if zip_info_file_path.exists():
             zip_info_file_path.unlink()
-
-
-def _get_extra_code_signature_size(bundle_url: Path) -> int:
-    """Calculate additional space needed for code signature."""
-
-    # TODO(EME-433): Implement actual code signature size calculation
-    return 0
