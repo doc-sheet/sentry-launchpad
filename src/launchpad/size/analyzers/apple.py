@@ -35,6 +35,7 @@ from launchpad.size.insights.common.large_audios import LargeAudioFileInsight
 from launchpad.size.insights.common.large_images import LargeImageFileInsight
 from launchpad.size.insights.common.large_videos import LargeVideoFileInsight
 from launchpad.size.insights.insight import InsightsInput
+from launchpad.size.models.common import APPLE_ANALYSIS_VERSION
 from launchpad.size.symbols.macho_symbol_sizes import MachOSymbolSizes
 from launchpad.size.treemap.treemap_builder import TreemapBuilder
 from launchpad.size.utils.apple_bundle_size import calculate_bundle_sizes
@@ -124,7 +125,7 @@ class AppleAppAnalyzer:
         )
 
         file_analysis = analyze_apple_files(artifact)
-        logger.debug(f"Found {file_analysis.file_count} files, total size: {file_analysis.total_size} bytes")
+        logger.debug(f"Found {len(file_analysis.files)} files, total size: {file_analysis.total_size} bytes")
 
         app_bundle_path = artifact.get_app_bundle_path()
         download_size, install_size = calculate_bundle_sizes(app_bundle_path)
@@ -240,6 +241,7 @@ class AppleAppAnalyzer:
 
         analysis_duration = time.time() - start_time
         results = AppleAnalysisResults(
+            analysis_version=APPLE_ANALYSIS_VERSION,
             app_info=app_info,
             file_analysis=file_analysis,
             treemap=treemap,
