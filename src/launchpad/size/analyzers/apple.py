@@ -259,6 +259,20 @@ class AppleAppAnalyzer:
 
         return results
 
+    def parse_plist_date(self, date_value: str | datetime | None) -> str | None:
+        if date_value is None:
+            return None
+
+        if isinstance(date_value, str):
+            try:
+                dt = datetime.fromisoformat(date_value)
+                return dt.isoformat()
+            except (ValueError, AttributeError):
+                logger.debug(f"Could not parse date string: {date_value}")
+                return date_value
+
+        return date_value.isoformat()
+
     @sentry_sdk.trace
     def _extract_app_info(self, xcarchive: ZippedXCArchive) -> AppleAppInfo:
         """Extract basic app information.
@@ -278,16 +292,12 @@ class AppleAppAnalyzer:
         if provisioning_profile:
             codesigning_type, profile_name = self._get_profile_type(provisioning_profile)
             expiration_date = provisioning_profile.get("ExpirationDate")
-            if expiration_date:
-                # Convert datetime to ISO format string
-                profile_expiration_date = expiration_date.isoformat()
+            profile_expiration_date = self.parse_plist_date(expiration_date)
             certificate_expiration_date = self._extract_certificate_expiration_date(provisioning_profile)
 
-        build_date = None
         archive_plist = xcarchive.get_archive_plist()
         if archive_plist:
-            creation_date = archive_plist.get("CreationDate")
-            build_date = creation_date.isoformat() if creation_date else None
+            build_date = self.parse_plist_date(archive_plist.get("CreationDate"))
 
         supported_platforms = plist.get("CFBundleSupportedPlatforms", [])
         is_simulator = "iphonesimulator" in supported_platforms or plist.get("DTPlatformName") == "iphonesimulator"
