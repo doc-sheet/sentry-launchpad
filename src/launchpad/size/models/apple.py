@@ -116,6 +116,7 @@ class SectionInfo:
 
     name: str
     size: int
+    is_zerofill: bool  # True if this section doesn't occupy file space (e.g., __bss)
 
 
 @dataclass

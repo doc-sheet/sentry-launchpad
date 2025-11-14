@@ -61,30 +61,37 @@ class MachOElementBuilder(TreemapElementBuilder):
         diff = file_info.size - total_child_size
         if diff != 0:
             pct = (abs(diff) / file_info.size * 100) if file_info.size else 0
-            logger.warning(f"Size mismatch for {display_name}: file={file_info.size:,} treemap={total_child_size:,}")
-            if diff > 0:
-                logger.warning(f"  Difference: {abs(diff):,} bytes MISSING from treemap ({pct:.2f}%)")
-            else:
-                logger.warning(f"  Difference: {abs(diff):,} bytes OVER-COUNTED in treemap ({pct:.2f}%)")
+            logger.warning(
+                "macho.treemap.size_mismatch",
+                extra={
+                    "binary_name": display_name,
+                    "file_size": file_info.size,
+                    "treemap_size": total_child_size,
+                    "difference": abs(diff),
+                    "difference_type": "missing" if diff > 0 else "over_counted",
+                    "percentage": round(pct, 2),
+                },
+            )
 
     def _build_binary_treemap(self, binary_analysis: MachOBinaryAnalysis) -> List[TreemapElement] | None:
         binary_children: List[TreemapElement] = []
 
         # Section bookkeeping for remaining size
         section_remaining: Dict[str, int] = {}
-        section_by_name: Dict[str, str] = {}  # section -> segment
+        zerofill_sections_set: set[str] = set()
 
         for seg in binary_analysis.segments:
             for sec in seg.sections or []:
                 key = f"{seg.name}.{sec.name}"
-                section_remaining[key] = sec.size
-                section_by_name[sec.name] = seg.name
+                if not sec.is_zerofill:
+                    section_remaining[key] = sec.size
+                else:
+                    zerofill_sections_set.add(key)
 
         def canonical_key(seg_name: str | None, sec_name: str | None) -> str | None:
-            if not sec_name:
+            if not sec_name or not seg_name:
                 return None
-            seg = seg_name or section_by_name.get(sec_name)
-            return f"{seg}.{sec_name}" if seg else None
+            return f"{seg_name}.{sec_name}"
 
         def debit_section(seg_name: str | None, sec_name: str | None, sz: int) -> int:
             if sz <= 0:
@@ -101,13 +108,30 @@ class MachOElementBuilder(TreemapElementBuilder):
 
         if binary_analysis.symbol_info:
             self._add_swift_symbols(
-                binary_analysis.symbol_info, binary_children, section_subtractions, debit_section, canonical_key
+                binary_analysis.symbol_info,
+                binary_children,
+                section_subtractions,
+                debit_section,
+                canonical_key,
+                zerofill_sections_set,
             )
+
             self._add_objc_symbols(
-                binary_analysis.symbol_info, binary_children, section_subtractions, debit_section, canonical_key
+                binary_analysis.symbol_info,
+                binary_children,
+                section_subtractions,
+                debit_section,
+                canonical_key,
+                zerofill_sections_set,
             )
+
             self._add_other_symbols(
-                binary_analysis.symbol_info, binary_children, section_subtractions, debit_section, canonical_key
+                binary_analysis.symbol_info,
+                binary_children,
+                section_subtractions,
+                debit_section,
+                canonical_key,
+                zerofill_sections_set,
             )
 
         # Metadata
@@ -116,35 +140,7 @@ class MachOElementBuilder(TreemapElementBuilder):
         # Segments/sections (minus symbol bytes)
         self._add_segments(binary_analysis, binary_children, section_subtractions)
 
-        # Unmapped region, if any remains
         self._add_unmapped_region(binary_analysis, binary_children)
-
-        total_segments = sum(
-            c.size
-            for c in binary_children
-            if c.type == TreemapType.EXECUTABLES
-            and c.children is not None
-            and any(
-                ch.name.startswith("__")
-                for ch in c.children  # crude: segments tend to have section children
-            )
-        )
-        linkedit = next((c for c in binary_children if c.name == "__LINKEDIT"), None)
-        header = next((c for c in binary_children if c.name == "Mach-O Header"), None)
-        lcs = next((c for c in binary_children if c.name == "Load Commands"), None)
-        total_accounted = sum(c.size for c in binary_children)
-
-        logger.warning(
-            "macho.treemap.accounting",
-            extra={
-                "total_segments": total_segments,
-                "exec_size": binary_analysis.executable_size,
-                "total_accounted": total_accounted,
-                "__LINKEDIT_size": getattr(linkedit, "size", 0),
-                "header_size": getattr(header, "size", 0),
-                "load_cmds_size": getattr(lcs, "size", 0),
-            },
-        )
 
         return binary_children
 
@@ -155,18 +151,39 @@ class MachOElementBuilder(TreemapElementBuilder):
         section_subtractions: Dict[str, int],
         debit_section: DebitFn,
         canonical_key: CanonKeyFn,
+        zerofill_sections: set[str],
     ) -> None:
         if not symbol_info.swift_type_groups:
             return
 
         swift_modules: Dict[str, List[SwiftSymbolTypeGroup]] = {}
+        # Track the actual size of each group (excluding zerofill symbols)
+        group_file_sizes: Dict[int, int] = {}
+
         for grp in symbol_info.swift_type_groups:
             swift_modules.setdefault(grp.module, []).append(grp)
+            file_size = 0
             for sym in grp.symbols:
+                # Skip symbols in zerofill sections - they don't occupy file space
+                key = canonical_key(sym.segment_name, sym.section_name)
+                if key and key in zerofill_sections:
+                    continue
+
+                file_size += sym.size
                 taken = debit_section(sym.segment_name, sym.section_name, sym.size)
                 if taken:
-                    key = canonical_key(sym.segment_name, sym.section_name)
                     section_subtractions[key] = section_subtractions.get(key, 0) + taken
+                elif sym.size > 0:
+                    # This is a bug - symbol has size but couldn't debit
+                    logger.warning(
+                        "macho.treemap.symbol_not_debited",
+                        extra={
+                            "symbol": sym.mangled_name,
+                            "size": sym.size,
+                            "section": key,
+                        },
+                    )
+            group_file_sizes[id(grp)] = file_size
 
         def _ensure(node_map: Dict[str, _SwiftTypeNode], name: str) -> _SwiftTypeNode:
             if name not in node_map:
@@ -207,18 +224,24 @@ class MachOElementBuilder(TreemapElementBuilder):
             type_tree: Dict[str, _SwiftTypeNode] = {}
 
             for group in type_groups:
+                file_size = group_file_sizes.get(id(group), 0)
+                if file_size == 0:
+                    continue
+
                 comps = group.components
                 if comps and comps[0] == module_name:
                     comps = comps[1:]
                 comps = [c for c in comps if c and c[0].isupper()]
+
+                # Handle symbols that couldn't be demangled or have no components
                 if not comps:
-                    continue
+                    comps = ["Unattributed"]
 
                 cur = type_tree
                 for i, comp in enumerate(comps):
                     node = _ensure(cur, comp)
                     if i == len(comps) - 1:
-                        node["self_size"] += group.total_size
+                        node["self_size"] += file_size
                     cur = node["children"]
 
             module_children = _tree_to_treemap(type_tree)
@@ -241,18 +264,24 @@ class MachOElementBuilder(TreemapElementBuilder):
         section_subtractions: Dict[str, int],
         debit_section: DebitFn,
         canonical_key: CanonKeyFn,
+        zerofill_sections: set[str],
     ) -> None:
         if not symbol_info.objc_type_groups:
             return
 
         objc_classes: Dict[str, List[tuple[str, int]]] = {}
         for grp in symbol_info.objc_type_groups:
-            objc_classes.setdefault(grp.class_name, []).append((grp.method_name or "class", grp.total_size))
+            file_size = 0
             for sym in grp.symbols:
+                key = canonical_key(sym.segment_name, sym.section_name)
+                if key and key in zerofill_sections:
+                    continue
+                file_size += sym.size
                 taken = debit_section(sym.segment_name, sym.section_name, sym.size)
                 if taken:
-                    key = canonical_key(sym.segment_name, sym.section_name)
                     section_subtractions[key] = section_subtractions.get(key, 0) + taken
+
+            objc_classes.setdefault(grp.class_name, []).append((grp.method_name or "class", file_size))
 
         for cls_name, meths in objc_classes.items():
             meth_elems = [
@@ -284,6 +313,7 @@ class MachOElementBuilder(TreemapElementBuilder):
         section_subtractions: Dict[str, int],
         debit_section: DebitFn,
         canonical_key: CanonKeyFn,
+        zerofill_sections: set[str],
     ) -> None:
         other_symbols_children: List[TreemapElement] = []
         total_other_symbols_size = 0
@@ -293,21 +323,23 @@ class MachOElementBuilder(TreemapElementBuilder):
             cpp_syms_with_size = []
             for grp in symbol_info.cpp_type_groups:
                 for sym in grp.symbols:
+                    key = canonical_key(sym.segment_name, sym.section_name)
+                    if key and key in zerofill_sections:
+                        continue
                     if sym.size > 0:
                         cpp_syms_with_size.append(sym)
-                    taken = debit_section(sym.segment_name, sym.section_name, sym.size)
-                    if taken:
-                        key = canonical_key(sym.segment_name, sym.section_name)
-                        section_subtractions[key] = section_subtractions.get(key, 0) + taken
+                        taken = debit_section(sym.segment_name, sym.section_name, sym.size)
+                        if taken:
+                            section_subtractions[key] = section_subtractions.get(key, 0) + taken
 
             if cpp_syms_with_size:
                 cpp_syms_with_size.sort(key=lambda s: s.size, reverse=True)
-                cpp_size = sum(s.size for s in cpp_syms_with_size)
-                total_other_symbols_size += cpp_size
+                cpp_total_size = sum(s.size for s in cpp_syms_with_size)
+                total_other_symbols_size += cpp_total_size
                 other_symbols_children.append(
                     TreemapElement(
                         name="C++",
-                        size=cpp_size,
+                        size=cpp_total_size,
                         type=TreemapType.MODULES,
                         path=None,
                         is_dir=False,
@@ -327,20 +359,24 @@ class MachOElementBuilder(TreemapElementBuilder):
 
         # Compiler-generated
         if symbol_info.compiler_generated_symbols:
-            comp_syms = [s for s in symbol_info.compiler_generated_symbols if s.size > 0]
-            for sym in comp_syms:
-                taken = debit_section(sym.segment_name, sym.section_name, sym.size)
-                if taken:
-                    key = canonical_key(sym.segment_name, sym.section_name)
-                    section_subtractions[key] = section_subtractions.get(key, 0) + taken
+            comp_syms = []
+            for sym in symbol_info.compiler_generated_symbols:
+                key = canonical_key(sym.segment_name, sym.section_name)
+                if key and key in zerofill_sections:
+                    continue
+                if sym.size > 0:
+                    comp_syms.append(sym)
+                    taken = debit_section(sym.segment_name, sym.section_name, sym.size)
+                    if taken:
+                        section_subtractions[key] = section_subtractions.get(key, 0) + taken
 
             if comp_syms:
-                comp_size = sum(s.size for s in comp_syms)
-                total_other_symbols_size += comp_size
+                comp_total_size = sum(s.size for s in comp_syms)
+                total_other_symbols_size += comp_total_size
                 other_symbols_children.append(
                     TreemapElement(
                         name="Compiler Generated",
-                        size=comp_size,
+                        size=comp_total_size,
                         type=TreemapType.MODULES,
                         path=None,
                         is_dir=False,
@@ -350,21 +386,25 @@ class MachOElementBuilder(TreemapElementBuilder):
 
         # C / other
         if symbol_info.other_symbols:
-            other_syms = [s for s in symbol_info.other_symbols if s.size > 0]
-            for sym in other_syms:
-                taken = debit_section(sym.segment_name, sym.section_name, sym.size)
-                if taken:
-                    key = canonical_key(sym.segment_name, sym.section_name)
-                    section_subtractions[key] = section_subtractions.get(key, 0) + taken
+            other_syms = []
+            for sym in symbol_info.other_symbols:
+                key = canonical_key(sym.segment_name, sym.section_name)
+                if key and key in zerofill_sections:
+                    continue
+                if sym.size > 0:
+                    other_syms.append(sym)
+                    taken = debit_section(sym.segment_name, sym.section_name, sym.size)
+                    if taken:
+                        section_subtractions[key] = section_subtractions.get(key, 0) + taken
 
             if other_syms:
                 other_syms.sort(key=lambda s: s.size, reverse=True)
-                c_size = sum(s.size for s in other_syms)
-                total_other_symbols_size += c_size
+                c_total_size = sum(s.size for s in other_syms)
+                total_other_symbols_size += c_total_size
                 other_symbols_children.append(
                     TreemapElement(
                         name="C Functions",
-                        size=c_size,
+                        size=c_total_size,
                         type=TreemapType.MODULES,
                         path=None,
                         is_dir=False,
@@ -408,32 +448,56 @@ class MachOElementBuilder(TreemapElementBuilder):
                 for section in segment.sections:
                     section_name = section.name
                     section_size = section.size
+
+                    # Skip zero-fill sections - they don't occupy file space
+                    if section.is_zerofill:
+                        continue
+
                     if section_size == 0:
                         continue
 
                     key = f"{segment_name}.{section_name}"
                     subtraction = section_subtractions.get(key, 0)
+
                     if subtraction > section_size:
                         logger.warning(
-                            f"Section {key}: symbol bytes ({subtraction:,}) exceed section size ({section_size:,})."
+                            "macho.treemap.section_over_debited",
+                            extra={
+                                "section_key": key,
+                                "symbol_bytes": subtraction,
+                                "section_size": section_size,
+                                "excess": subtraction - section_size,
+                            },
                         )
                         subtraction = section_size
 
                     adjusted = section_size - subtraction
-                    if adjusted <= 0:
+
+                    if adjusted < 0:
+                        logger.warning(
+                            "macho.treemap.section_negative_adjusted_size",
+                            extra={
+                                "section_name": section_name,
+                                "adjusted_size": adjusted,
+                                "section_size": section_size,
+                                "subtraction": subtraction,
+                            },
+                        )
+                        continue
+                    elif adjusted == 0:
                         continue
 
                     tag = self._categorize_section(section_name, segment_name) or BinaryTag.OTHER
-                    segment_children.append(
-                        TreemapElement(
-                            name=section_name,
-                            size=adjusted,
-                            type=self._get_element_type_from_tag(tag),
-                            path=None,
-                            is_dir=False,
-                            children=[],
-                        )
+                    elem = TreemapElement(
+                        name=section_name,
+                        size=adjusted,
+                        type=self._get_element_type_from_tag(tag),
+                        path=None,
+                        is_dir=False,
+                        children=[],
                     )
+
+                    segment_children.append(elem)
 
             linkedit_children_size = 0
             if segment_name == "__LINKEDIT":
@@ -441,15 +505,29 @@ class MachOElementBuilder(TreemapElementBuilder):
                 segment_children.extend(linkedit_children)
                 linkedit_children_size = sum(c.size for c in linkedit_children)
 
-            displayed_section_size = sum(c.size for c in segment_children)
-
             seg_total_size = getattr(segment, "file_size", None)
             if not isinstance(seg_total_size, int) or seg_total_size <= 0:
                 seg_total_size = segment.size
 
-            total_section_declared = sum(s.size for s in segment.sections) if segment.sections else 0
+            total_section_declared = (
+                sum(s.size for s in segment.sections if not s.is_zerofill) if segment.sections else 0
+            )
             segment_overhead = seg_total_size - total_section_declared - linkedit_children_size
-            actual_segment_size = displayed_section_size + max(0, segment_overhead)
+
+            # Add unmapped space within the segment (padding, alignment, etc.)
+            if segment_overhead > 0:
+                segment_children.append(
+                    TreemapElement(
+                        name="Unmapped",
+                        size=segment_overhead,
+                        type=TreemapType.UNMAPPED,
+                        path=None,
+                        is_dir=False,
+                        children=[],
+                    )
+                )
+
+            actual_segment_size = sum(c.size for c in segment_children)
 
             if actual_segment_size > 0:
                 binary_children.append(
@@ -591,20 +669,6 @@ class MachOElementBuilder(TreemapElementBuilder):
 
         return linkedit_children
 
-    def _add_unmapped_region(self, binary_analysis: MachOBinaryAnalysis, binary_children: List[TreemapElement]) -> None:
-        total_accounted = sum(c.size for c in binary_children)
-        if binary_analysis.executable_size > total_accounted:
-            binary_children.append(
-                TreemapElement(
-                    name="Unmapped",
-                    size=binary_analysis.executable_size - total_accounted,
-                    type=TreemapType.UNMAPPED,
-                    path=None,
-                    is_dir=False,
-                    children=[],
-                )
-            )
-
     def _get_element_type_from_tag(self, tag: BinaryTag) -> TreemapType:
         v = tag.value
         if v.startswith("dyld_"):
@@ -639,3 +703,17 @@ class MachOElementBuilder(TreemapElementBuilder):
         if any(d in name_lower for d in ["__data", "__bss", "__common"]) or segment_name_lower == "__data":
             return BinaryTag.DATA_SEGMENT
         return None
+
+    def _add_unmapped_region(self, binary_analysis: MachOBinaryAnalysis, binary_children: List[TreemapElement]) -> None:
+        total_accounted = sum(c.size for c in binary_children)
+        if binary_analysis.executable_size > total_accounted:
+            binary_children.append(
+                TreemapElement(
+                    name="Unmapped",
+                    size=binary_analysis.executable_size - total_accounted,
+                    type=TreemapType.UNMAPPED,
+                    path=None,
+                    is_dir=False,
+                    children=[],
+                )
+            )
