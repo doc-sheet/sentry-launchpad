@@ -1,114 +1,262 @@
-"""Integration tests for the Launchpad service."""
-
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+import os
+import tempfile
+import time
+
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from launchpad.server import LaunchpadServer
-from launchpad.service import LaunchpadService
+from aiohttp.test_utils import TestClient, TestServer
+
+from launchpad.artifact_processor import ArtifactProcessor
+from launchpad.constants import PREPROD_ARTIFACT_EVENTS_TOPIC, PreprodFeature
+from launchpad.kafka import LaunchpadKafkaConsumer, create_kafka_consumer, get_kafka_config
+from launchpad.service import LaunchpadService, ServiceConfig, get_service_config
 from launchpad.utils.statsd import FakeStatsd
 
 
-class TestServiceIntegration:
-    """Integration tests for the full service orchestration."""
+@pytest.fixture
+def kafka_env_vars():
+    env_vars = {
+        "KAFKA_BOOTSTRAP_SERVERS": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "KAFKA_GROUP_ID": f"launchpad-test-{int(time.time())}",
+        "KAFKA_TOPICS": PREPROD_ARTIFACT_EVENTS_TOPIC,
+        "KAFKA_CONCURRENCY": "1",
+        "KAFKA_AUTO_OFFSET_RESET": "earliest",
+        "LAUNCHPAD_ENV": "development",
+        "SENTRY_BASE_URL": "http://test.sentry.io",
+    }
+    with patch.dict(os.environ, env_vars, clear=False):
+        yield env_vars
 
-    def test_service_setup_integration(self):
-        """Test that service setup initializes all components correctly."""
+
+@pytest.fixture
+def temp_healthcheck_file():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        yield f.name
+    try:
+        os.unlink(f.name)
+    except FileNotFoundError:
+        pass
+
+
+class TestKafkaConfigIntegration:
+    """Integration tests for Kafka configuration loading."""
+
+    def test_kafka_config_from_environment(self, kafka_env_vars):
+        """Test that Kafka configuration is correctly loaded from environment variables."""
+        config = get_kafka_config()
+
+        assert config.bootstrap_servers == kafka_env_vars["KAFKA_BOOTSTRAP_SERVERS"]
+        assert config.group_id == kafka_env_vars["KAFKA_GROUP_ID"]
+        assert config.topics == [PREPROD_ARTIFACT_EVENTS_TOPIC]
+        assert config.concurrency == 1
+        assert config.auto_offset_reset == "earliest"
+
+    def test_kafka_config_missing_required_vars(self):
+        """Test that missing required environment variables raise errors."""
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError, match="KAFKA_BOOTSTRAP_SERVERS"):
+                create_kafka_consumer()
+
+    def test_kafka_config_with_security_settings(self):
+        """Test that security configuration is properly loaded."""
+        with patch.dict(
+            os.environ,
+            {
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "KAFKA_GROUP_ID": "test-group",
+                "KAFKA_TOPICS": "test-topic",
+                "KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
+                "KAFKA_SASL_MECHANISM": "PLAIN",
+                "KAFKA_SASL_USERNAME": "test-user",
+                "KAFKA_SASL_PASSWORD": "test-pass",
+                "LAUNCHPAD_ENV": "development",
+            },
+        ):
+            config = get_kafka_config()
+            assert config.security_protocol == "SASL_SSL"
+            assert config.sasl_mechanism == "PLAIN"
+            assert config.sasl_username == "test-user"
+            assert config.sasl_password == "test-pass"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("SKIP_KAFKA_INTEGRATION_TESTS") == "1",
+    reason="Kafka integration tests require running Kafka broker (devservices up)",
+)
+class TestKafkaConsumerIntegration:
+    """Integration tests that require a real Kafka broker.
+
+    These tests run by default in CI (which starts Kafka via devservices) and locally
+    with devservices running. Set SKIP_KAFKA_INTEGRATION_TESTS=1 to skip them.
+
+    Run with Kafka:
+        devservices up
+        pytest tests/integration/test_kafka_service.py::TestKafkaConsumerIntegration -v
+
+    Skip (fast mode):
+        SKIP_KAFKA_INTEGRATION_TESTS=1 pytest tests/integration/test_kafka_service.py -v
+    """
+
+    def test_kafka_consumer_creation(self, kafka_env_vars):
+        """Test that Kafka consumer can be created with real configuration."""
+        consumer = create_kafka_consumer()
+
+        assert isinstance(consumer, LaunchpadKafkaConsumer)
+        assert consumer.processor is not None
+        assert consumer.healthcheck_path is not None
+        assert consumer.strategy_factory is not None
+
+
+@pytest.mark.integration
+class TestServiceIntegration:
+    def test_service_setup(self, kafka_env_vars):
+        """Test that service setup initializes real components correctly."""
         fake_statsd = FakeStatsd()
         service = LaunchpadService(fake_statsd)
 
-        # Mock external dependencies
         with (
             patch("launchpad.service.initialize_sentry_sdk"),
-            patch("launchpad.service.SentryClient") as mock_sentry_client,
-            patch("launchpad.service.LaunchpadServer") as mock_server,
-            patch("launchpad.service.create_kafka_consumer") as mock_kafka,
+            patch("launchpad.kafka.configure_metrics"),
         ):
             service.setup()
 
-            # Verify all components were initialized
             assert service._service_config is not None
             assert service._sentry_client is not None
             assert service.server is not None
             assert service.kafka is not None
 
-            # Verify components were created with correct parameters
-            mock_sentry_client.assert_called_once()
-            mock_server.assert_called_once()
-            mock_kafka.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_service_health_check_integration(self):
-        """Test service health check with mocked components."""
-        fake_statsd = FakeStatsd()
-        service = LaunchpadService(fake_statsd)
-
-        # Mock server and kafka components
-        mock_server = Mock()
-        mock_kafka = Mock()
-
-        mock_server.is_healthy.return_value = True
-        mock_kafka.is_healthy.return_value = True
-
-        service.server = mock_server
-        service.kafka = mock_kafka
-
-        # Test healthy state
-        assert service.is_healthy() is True
-
-        # Test unhealthy server
-        mock_server.is_healthy.return_value = False
-        assert service.is_healthy() is False
-
-        # Test unhealthy kafka
-        mock_server.is_healthy.return_value = True
-        mock_kafka.is_healthy.return_value = False
-        assert service.is_healthy() is False
-
-    def test_service_config_integration(self):
+    def test_service_config_loading(self):
         """Test service configuration loading from environment."""
-        from launchpad.service import get_service_config
 
-        # Test with default values
         with patch.dict("os.environ", {}, clear=True):
             config = get_service_config()
             assert config.sentry_base_url == "http://getsentry.default"
             assert config.projects_to_skip == []
 
-        # Test with environment variables
         with patch.dict(
             "os.environ",
-            {"SENTRY_BASE_URL": "https://custom.sentry.io", "PROJECT_IDS_TO_SKIP": "project1,project2,project3"},
+            {
+                "SENTRY_BASE_URL": "https://custom.sentry.io",
+                "PROJECT_IDS_TO_SKIP": "project1,project2,project3",
+            },
         ):
             config = get_service_config()
             assert config.sentry_base_url == "https://custom.sentry.io"
             assert config.projects_to_skip == ["project1", "project2", "project3"]
 
-
-@pytest.mark.integration
-class TestServiceWithMockServer:
-    """Integration tests that actually start the HTTP server."""
-
     @pytest.mark.asyncio
-    async def test_http_endpoints_while_service_running(self):
-        """Test HTTP endpoints while the service is running (mocked)."""
-        # This is a placeholder for a more complex integration test
-        # that would start the actual service and test HTTP endpoints
-        # For now, we test the components separately
+    async def test_http_server_endpoints_integration(self, kafka_env_vars, temp_healthcheck_file):
+        """Test HTTP server endpoints with real service components."""
 
         fake_statsd = FakeStatsd()
-        server = LaunchpadServer(lambda: True, host="127.0.0.1", port=0, statsd=fake_statsd)  # Random port
-        app = server.create_app()
+        service = LaunchpadService(fake_statsd)
 
-        # Test that we can create the app without errors
-        assert app is not None
+        with (
+            patch("launchpad.service.initialize_sentry_sdk"),
+            patch("launchpad.kafka.configure_metrics"),
+            patch.dict(os.environ, {"KAFKA_HEALTHCHECK_FILE": temp_healthcheck_file}),
+        ):
+            service.setup()
 
-        # In a real integration test, we would:
-        # 1. Start the service in a background task
-        # 2. Make HTTP requests to test endpoints
-        # 3. Send Kafka messages to test processing
-        # 4. Verify end-to-end behavior
+            Path(temp_healthcheck_file).touch()
 
-        # For now, this validates the service structure is correct
+            app = service.server.create_app()
+            server = TestServer(app)
+            client = TestClient(server)
+
+            await client.start_server()
+            try:
+                resp = await client.get("/health")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["service"] == "launchpad"
+
+                resp = await client.get("/ready")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["service"] == "launchpad"
+            finally:
+                await client.close()
+
+
+class TestMessageProcessingFlow:
+    """Test the message processing flow with real processing logic."""
+
+    def test_process_message_with_skipped_project(self):
+        """Test that projects in skip list are not processed."""
+
+        fake_statsd = FakeStatsd()
+        service_config = ServiceConfig(
+            sentry_base_url="http://test.sentry.io",
+            projects_to_skip=["skip-project"],
+        )
+
+        test_message = {
+            "artifact_id": "test-123",
+            "project_id": "skip-project",
+            "organization_id": "test-org",
+            "requested_features": ["size_analysis"],
+        }
+
+        with patch.object(ArtifactProcessor, "process_artifact") as mock_process:
+            ArtifactProcessor.process_message(test_message, service_config=service_config, statsd=fake_statsd)
+            mock_process.assert_not_called()
+
+    def test_process_message_with_allowed_project(self):
+        """Test that non-skipped projects are processed."""
+
+        fake_statsd = FakeStatsd()
+        service_config = ServiceConfig(
+            sentry_base_url="http://test.sentry.io",
+            projects_to_skip=["other-project"],
+        )
+
+        test_message = {
+            "artifact_id": "test-123",
+            "project_id": "normal-project",
+            "organization_id": "test-org",
+            "requested_features": ["size_analysis"],
+        }
+
+        with patch.object(ArtifactProcessor, "process_artifact") as mock_process:
+            ArtifactProcessor.process_message(test_message, service_config=service_config, statsd=fake_statsd)
+
+            mock_process.assert_called_once_with(
+                "test-org",
+                "normal-project",
+                "test-123",
+                [PreprodFeature.SIZE_ANALYSIS],
+            )
+
+            calls = fake_statsd.calls
+            assert ("increment", {"metric": "artifact.processing.started", "value": 1, "tags": None}) in calls
+            assert ("increment", {"metric": "artifact.processing.completed", "value": 1, "tags": None}) in calls
+
+    def test_process_message_error_handling(self):
+        """Test that processing errors are handled gracefully."""
+
+        fake_statsd = FakeStatsd()
+        service_config = ServiceConfig(
+            sentry_base_url="http://test.sentry.io",
+            projects_to_skip=[],
+        )
+
+        test_message = {
+            "artifact_id": "test-123",
+            "project_id": "test-project",
+            "organization_id": "test-org",
+            "requested_features": ["size_analysis"],
+        }
+
+        with patch.object(ArtifactProcessor, "process_artifact", side_effect=RuntimeError("Test error")):
+            ArtifactProcessor.process_message(test_message, service_config=service_config, statsd=fake_statsd)
+
+            calls = fake_statsd.calls
+            increment_calls = [call for call in calls if call[0] == "increment"]
+            assert any(call[1]["metric"] == "artifact.processing.failed" for call in increment_calls)
