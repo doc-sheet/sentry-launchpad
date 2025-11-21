@@ -32,6 +32,20 @@ interface AppInfo {
   code_signature_errors?: string[];
 }
 
+export enum ComponentType {
+  MAIN_ARTIFACT = 0,
+  WATCH_ARTIFACT = 1,
+  ANDROID_DYNAMIC_FEATURE = 2,
+}
+
+export interface AppComponent {
+  component_type: ComponentType;
+  name: string;
+  path: string;
+  download_size: number;
+  install_size: number;
+}
+
 export interface InsightResult {
   total_savings: number;
   files?: {
@@ -123,6 +137,7 @@ export interface FileAnalysisReport {
   use_si_units: boolean;
   install_size: number;
   download_size: number;
+  app_components?: AppComponent[];
 }
 
 export function parseFileAnalysisReport(data: unknown): FileAnalysisReport {

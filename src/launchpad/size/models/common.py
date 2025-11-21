@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import IntEnum
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -15,7 +16,7 @@ from .treemap import TreemapResults, TreemapType
 # so we can update treemap logic and not give users confusing diffs.
 # Patch versions are ignored.
 ANDROID_ANALYSIS_VERSION = "1.0.0"
-APPLE_ANALYSIS_VERSION = "1.2.0"
+APPLE_ANALYSIS_VERSION = "1.2.1"
 
 
 class BaseAppInfo(BaseModel):
@@ -78,6 +79,47 @@ class FileInfo(BaseModel):
     colorspace: str | None = Field(default=None, description="Color space for asset catalog images")
 
 
+class ComponentType(IntEnum):
+    """Type of modular app component. Compatible with backend MetricsArtifactType.
+
+    NOTE: The backend model must be updated FIRST if this enum is changed, so that it
+    doesn't reject the new values.
+    """
+
+    MAIN_ARTIFACT = 0
+    """The main artifact (not used in app_components list)."""
+    WATCH_ARTIFACT = 1
+    """An embedded watch artifact."""
+    ANDROID_DYNAMIC_FEATURE = 2
+    """An embedded Android dynamic feature artifact."""
+
+    @classmethod
+    def as_choices(cls) -> tuple[tuple[int, str], ...]:
+        """Return choices tuple for compatibility with backend."""
+        return (
+            (cls.MAIN_ARTIFACT, "main_artifact"),
+            (cls.WATCH_ARTIFACT, "watch_artifact"),
+            (cls.ANDROID_DYNAMIC_FEATURE, "android_dynamic_feature_artifact"),
+        )
+
+    def to_string(self) -> str:
+        """Return the string representation for this component type."""
+        choices = dict(self.as_choices())
+        return choices[self]
+
+
+class AppComponent(BaseModel):
+    """Information about a modular app component (watch app, app extension, dynamic feature, etc.)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    component_type: ComponentType = Field(..., description="Type of component")
+    name: str = Field(..., description="Component identifier/name")
+    path: str = Field(..., description="Relative path in the bundle")
+    download_size: int = Field(..., ge=0, description="Estimated download size in bytes")
+    install_size: int = Field(..., ge=0, description="Estimated install size in bytes")
+
+
 class BaseAnalysisResults(BaseModel):
     """Base analysis results structure."""
 
@@ -91,8 +133,12 @@ class BaseAnalysisResults(BaseModel):
     file_analysis: FileAnalysis = Field(..., description="File-level analysis results", exclude=True)
     treemap: TreemapResults | None = Field(..., description="Hierarchical size analysis treemap")
     use_si_units: bool = Field(default=False, description="Whether to use SI units for size display")
-    download_size: int = Field(..., description="Estimated download size in bytes")
-    install_size: int = Field(..., description="Estimated install size in bytes")
+    download_size: int = Field(..., description="Total estimated download size in bytes (main app + all components)")
+    install_size: int = Field(..., description="Total estimated install size in bytes (main app + all components)")
+    app_components: List[AppComponent] = Field(
+        default_factory=list,
+        description="Breakdown of modular app components (watch apps, extensions, dynamic features). To get main app size: total - sum(component sizes)",
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with serializable datetime."""

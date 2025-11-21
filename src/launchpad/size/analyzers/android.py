@@ -130,6 +130,7 @@ class AndroidAnalyzer:
             insights=insights,
             download_size=download_size,
             install_size=install_size,
+            app_components=[],  # TODO: Populate with dynamic features when implemented
             analysis_duration=analysis_duration,
             use_si_units=False,
         )

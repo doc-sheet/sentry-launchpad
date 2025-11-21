@@ -4,19 +4,48 @@ import tempfile
 import uuid
 
 from pathlib import Path
-from typing import Tuple
+from typing import List, NamedTuple
 
 import lzfse
 
 from launchpad.size.constants import APPLE_FILESYSTEM_BLOCK_SIZE
+from launchpad.size.models.common import AppComponent, ComponentType
 from launchpad.utils.file_utils import get_file_size, to_nearest_block_size
 from launchpad.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-def calculate_bundle_sizes(bundle_url: Path) -> Tuple[int, int]:
-    """Calculate the download and install sizes for an Apple app bundle."""
+class ComponentSizes(NamedTuple):
+    """Size information for a component."""
+
+    download_size: int
+    install_size: int
+
+
+class ComponentsWithSizes(NamedTuple):
+    """Aggregated size information with component breakdown."""
+
+    total_download: int
+    total_install: int
+    components: List[tuple[Path, int, int]]
+
+
+class BundleSizes(NamedTuple):
+    """Complete bundle size information with all components."""
+
+    total_download: int
+    total_install: int
+    app_components: List[AppComponent]
+
+
+def calculate_bundle_sizes(
+    bundle_url: Path,
+    main_app_name: str,
+) -> BundleSizes:
+    """
+    Calculate the download and install sizes for an Apple app bundle with component breakdown.
+    """
 
     if not bundle_url.exists():
         raise ValueError(f"Bundle not found: {bundle_url}")
@@ -24,10 +53,10 @@ def calculate_bundle_sizes(bundle_url: Path) -> Tuple[int, int]:
     if bundle_url.suffix != ".app":
         raise ValueError(f"Only .app bundles are supported, got: {bundle_url}")
 
-    install_size = _calculate_app_store_size(bundle_url)
+    install_size = _calculate_install_size(bundle_url)
+    lzfse_size = _calculate_lzfse_size(bundle_url)
     metadata_size = _zip_metadata_size_for_bundle(bundle_url)
-    lzfse_size = _lzfse_content_size_for_bundle(bundle_url)
-    download_size = metadata_size + lzfse_size
+    download_size = lzfse_size + metadata_size
 
     logger.debug(
         f"Bundle size breakdown - "
@@ -37,39 +66,133 @@ def calculate_bundle_sizes(bundle_url: Path) -> Tuple[int, int]:
         f"Total install: {install_size} bytes"
     )
 
-    return download_size, install_size
+    watch_sizes = _calculate_watch_component_sizes(bundle_url)
+
+    main_download = download_size - watch_sizes.total_download
+    main_install = install_size - watch_sizes.total_install
+
+    app_components: List[AppComponent] = [
+        AppComponent(
+            component_type=ComponentType.MAIN_ARTIFACT,
+            name=main_app_name,
+            path=".",
+            download_size=main_download,
+            install_size=main_install,
+        )
+    ]
+
+    for watch_path, watch_download_size, watch_install_size in watch_sizes.components:
+        relative_path = str(watch_path.relative_to(bundle_url))
+        app_components.append(
+            AppComponent(
+                component_type=ComponentType.WATCH_ARTIFACT,
+                name=watch_path.stem,
+                path=relative_path,
+                download_size=watch_download_size,
+                install_size=watch_install_size,
+            )
+        )
+
+        logger.info(
+            "size.apple.watch_app_sizes",
+            extra={
+                "watch_app_name": watch_path.stem,
+                "download_size": watch_download_size,
+                "install_size": watch_install_size,
+            },
+        )
+
+    logger.info(
+        "size.apple.bundle_sizes",
+        extra={
+            "main_app_download_size": main_download,
+            "main_app_install_size": main_install,
+            "total_download_size": download_size,
+            "total_install_size": install_size,
+            "watch_app_count": len(app_components) - 1,
+        },
+    )
+
+    return BundleSizes(
+        total_download=download_size,
+        total_install=install_size,
+        app_components=app_components,
+    )
 
 
-def _calculate_app_store_size(bundle_url: Path) -> int:
-    total_size = 0
-    file_count = 0
+def _calculate_component_sizes(component_path: Path) -> ComponentSizes:
+    """Calculate the download and install sizes for a specific component (subdirectory) within a bundle."""
 
-    # Include the root directory's own entry size
-    root_dir_size = to_nearest_block_size(get_file_size(bundle_url), APPLE_FILESYSTEM_BLOCK_SIZE)
-    total_size += root_dir_size
-    logger.debug(f"Root directory size: {root_dir_size}")
+    if not component_path.exists():
+        raise ValueError(f"Component path not found: {component_path}")
 
-    for file_path in bundle_url.rglob("*"):
-        logger.debug(f"Processing file: {file_path.relative_to(bundle_url)}")
-        if file_path.is_symlink():
-            logger.debug("Skipping symlink")
+    if not component_path.is_dir():
+        raise ValueError(f"Component path must be a directory: {component_path}")
+
+    install_size = _calculate_install_size(component_path)
+    download_size = _calculate_lzfse_size(component_path)
+
+    logger.debug(
+        f"Component {component_path.name} size - Download: {download_size} bytes, Install: {install_size} bytes"
+    )
+
+    return ComponentSizes(download_size=download_size, install_size=install_size)
+
+
+def _calculate_watch_component_sizes(bundle_path: Path) -> ComponentsWithSizes:
+    """Calculate sizes for all watch app components in a bundle."""
+
+    watch_apps = list(bundle_path.rglob("Watch/*.app"))
+
+    if not watch_apps:
+        return ComponentsWithSizes(total_download=0, total_install=0, components=[])
+
+    components: List[tuple[Path, int, int]] = []
+    total_download = 0
+    total_install = 0
+
+    for watch_app_path in watch_apps:
+        if not watch_app_path.is_dir():
             continue
 
-        file_count += 1
-        file_size = to_nearest_block_size(get_file_size(file_path), APPLE_FILESYSTEM_BLOCK_SIZE)
+        sizes = _calculate_component_sizes(watch_app_path)
+        components.append((watch_app_path, sizes.download_size, sizes.install_size))
+        total_download += sizes.download_size
+        total_install += sizes.install_size
 
-        total_size += file_size
-        logger.debug(f"File size: {file_size}, Total size: {total_size}")
+    # Calculate Watch/ directory overhead and divide evenly across watch apps
+    watch_dir = bundle_path / "Watch"
+    if watch_dir.exists() and components:
+        watch_dir_overhead = to_nearest_block_size(get_file_size(watch_dir), APPLE_FILESYSTEM_BLOCK_SIZE)
 
-    logger.debug(f"App Store size calculation: {file_count} files, {total_size} bytes")
+        # Divide overhead evenly, first component gets remainder
+        overhead_per_app = watch_dir_overhead // len(components)
+        overhead_remainder = watch_dir_overhead % len(components)
 
-    return total_size
+        updated_components = []
+        for i, (path, download, install) in enumerate(components):
+            # First component gets remainder
+            if i == 0:
+                install += overhead_per_app + overhead_remainder
+            else:
+                install += overhead_per_app
+            updated_components.append((path, download, install))
+
+        components = updated_components
+        total_install += watch_dir_overhead
+
+    return ComponentsWithSizes(
+        total_download=total_download,
+        total_install=total_install,
+        components=components,
+    )
 
 
-def _lzfse_content_size_for_bundle(bundle_url: Path) -> int:
+def _calculate_lzfse_size(path: Path) -> int:
+    """Calculate LZFSE compressed size for all files in a directory."""
     total_lzfse_size = 0
 
-    for file_path in bundle_url.rglob("*"):
+    for file_path in path.rglob("*"):
         if not file_path.is_file():
             continue
 
@@ -79,6 +202,7 @@ def _lzfse_content_size_for_bundle(bundle_url: Path) -> int:
         compressed = _lzfse_compressed_size(file_path)
         total_lzfse_size += compressed
 
+    logger.debug(f"LZFSE size for {path.name}: {total_lzfse_size} bytes")
     return total_lzfse_size
 
 
@@ -97,6 +221,28 @@ def _lzfse_compressed_size(file_path: Path) -> int:
     except Exception:
         logger.exception(f"Error lzfse compressing file {file_path}")
         return os.path.getsize(file_path)
+
+
+def _calculate_install_size(path: Path) -> int:
+    """Calculate install size by summing file sizes rounded to block size."""
+
+    total_size = 0
+    file_count = 0
+
+    # Include the root directory's own entry size
+    root_dir_size = to_nearest_block_size(get_file_size(path), APPLE_FILESYSTEM_BLOCK_SIZE)
+    total_size += root_dir_size
+
+    for file_path in path.rglob("*"):
+        if file_path.is_symlink():
+            continue
+
+        file_count += 1
+        file_size = to_nearest_block_size(get_file_size(file_path), APPLE_FILESYSTEM_BLOCK_SIZE)
+        total_size += file_size
+
+    logger.debug(f"Install size for {path.name}: {file_count} files, {total_size} bytes")
+    return total_size
 
 
 def _zip_metadata_size_for_bundle(bundle_url: Path) -> int:

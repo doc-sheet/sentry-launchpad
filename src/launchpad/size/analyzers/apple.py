@@ -128,12 +128,17 @@ class AppleAppAnalyzer:
         logger.debug(f"Found {len(file_analysis.files)} files, total size: {file_analysis.total_size} bytes")
 
         app_bundle_path = artifact.get_app_bundle_path()
-        download_size, install_size = calculate_bundle_sizes(app_bundle_path)
+
+        bundle_sizes = calculate_bundle_sizes(app_bundle_path, app_info.name)
+        total_download_size = bundle_sizes.total_download
+        total_install_size = bundle_sizes.total_install
+        app_components = bundle_sizes.app_components
         logger.info(
             "size.apple.bundle_sizes",
             extra={
-                "download_size": download_size,
-                "install_size": install_size,
+                "download_size": total_download_size,
+                "install_size": total_install_size,
+                "app_components": [component.model_dump() for component in app_components],
             },
         )
 
@@ -248,8 +253,9 @@ class AppleAppAnalyzer:
             insights=insights,
             analysis_duration=analysis_duration,
             use_si_units=True,
-            download_size=download_size,
-            install_size=install_size,
+            download_size=total_download_size,
+            install_size=total_install_size,
+            app_components=app_components,
         )
 
         logger.info(
