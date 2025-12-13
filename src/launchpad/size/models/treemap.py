@@ -54,6 +54,14 @@ class TreemapType(str, Enum):
     UNMAPPED = "unmapped"
 
 
+class TreemapElementMisc(BaseModel):
+    """Miscellaneous metadata for treemap elements."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scale: int | None = Field(None, description="Scale factor for asset catalog images (1, 2, 3)")
+
+
 # Mapping from file types to TreemapType
 FILE_TYPE_TO_TREEMAP_TYPE: dict[str, TreemapType] = {
     # Binary types
@@ -120,6 +128,7 @@ class TreemapElement(BaseModel):
     is_dir: bool = Field(False, description="Whether this element represents a directory")
     """ Some files (like zip files) are not directories but have children. """
     children: List[TreemapElement] = Field(default_factory=list, description="Child elements")
+    misc: TreemapElementMisc | None = Field(None, description="Optional miscellaneous data for this element")
 
 
 class TreemapResults(BaseModel):
