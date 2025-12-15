@@ -125,3 +125,22 @@ class TestCheckReasonableZip:
             # iOS fixture is ~32MB uncompressed, so limit of 10MB should fail
             with pytest.raises(UnreasonableZipError, match="exceeding the limit of 10.0MB"):
                 check_reasonable_zip(zf, max_uncompressed_size=10 * 1024 * 1024)
+
+    def test_extract_zstd_zip(self) -> None:
+        """Test that zstd-compressed zips can be extracted."""
+        with tempfile.NamedTemporaryFile(suffix=".zip") as temp_file:
+            temp_path = Path(temp_file.name)
+
+            # Create a zstd-compressed zip (compression method 93)
+            with zipfile.ZipFile(temp_path, "w") as zf:
+                zf.writestr("test.txt", "content", compress_type=93)
+
+            try:
+                provider = ZipProvider(temp_path)
+                temp_dir = provider.extract_to_temp_directory()
+
+                assert temp_dir.exists()
+                assert (temp_dir / "test.txt").exists()
+                assert (temp_dir / "test.txt").read_text() == "content"
+            finally:
+                temp_path.unlink(missing_ok=True)

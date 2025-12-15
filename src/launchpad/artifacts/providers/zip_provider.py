@@ -92,12 +92,15 @@ class ZipProvider:
         self._temp_dirs.append(temp_dir)
 
         self._safe_extract(str(self.path), str(temp_dir))
-        logger.debug(f"Extracted zip contents to {temp_dir} using system unzip")
+        logger.debug(f"Extracted zip contents to {temp_dir}")
 
         return temp_dir
 
     def _safe_extract(self, zip_path: str, extract_path: str):
-        """Extract the zip contents to a temporary directory, ensuring that the paths are safe from path traversal attacks."""
+        """Extract the zip contents to a temporary directory, ensuring that the paths are safe from path traversal attacks.
+
+        Supports both standard compression methods and Zstandard compression.
+        """
         base_dir = Path(extract_path)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             check_reasonable_zip(zip_ref)
