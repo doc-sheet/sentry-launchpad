@@ -37,7 +37,11 @@ PutSize = Annotated[
 ]
 
 
-class AppleAppInfo(BaseModel):
+class BaseAppInfo(BaseModel):
+    cli_version: Optional[str] = Field(None, description="sentry-cli version used for uploading")
+
+
+class AppleAppInfo(BaseAppInfo):
     is_simulator: bool
     codesigning_type: Optional[str] = None
     profile_name: Optional[str] = None
@@ -48,10 +52,12 @@ class AppleAppInfo(BaseModel):
     certificate_expiration_date: Optional[str] = None
     missing_dsym_binaries: Optional[List[str]] = None
     build_date: Optional[str] = None
+    fastlane_plugin_version: Optional[str] = Field(None, description="Fastlane plugin version used for uploading")
 
 
-class AndroidAppInfo(BaseModel):
+class AndroidAppInfo(BaseAppInfo):
     has_proguard_mapping: bool
+    gradle_plugin_version: Optional[str] = Field(None, description="Gradle plugin version used for uploading")
 
 
 class UpdateData(BaseModel):

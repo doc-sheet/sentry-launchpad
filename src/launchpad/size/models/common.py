@@ -28,6 +28,7 @@ class BaseAppInfo(BaseModel):
     version: str = Field(..., description="App version")
     build: str = Field(..., description="Build number")
     app_id: str = Field(..., description="App ID (bundle id on iOS, package name on Android)")
+    cli_version: str | None = Field(None, description="sentry-cli version used for uploading")
 
 
 class FileAnalysis(BaseModel):
