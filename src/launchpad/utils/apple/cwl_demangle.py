@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 
 from dataclasses import dataclass
@@ -12,6 +13,12 @@ from typing import Dict, List, Tuple
 from launchpad.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Default timeout for cwl-demangle subprocess (in seconds)
+DEFAULT_DEMANGLE_TIMEOUT = int(os.environ.get("LAUNCHPAD_DEMANGLE_TIMEOUT", "10"))
+
+# Default chunk size for batching symbols
+DEFAULT_CHUNK_SIZE = int(os.environ.get("LAUNCHPAD_DEMANGLE_CHUNK_SIZE", "500"))
 
 
 @dataclass
@@ -75,7 +82,7 @@ class CwlDemangler:
         self.queue.clear()
 
         # Process in chunks to avoid potential issues with large inputs
-        chunk_size = 5000
+        chunk_size = DEFAULT_CHUNK_SIZE
         total_chunks = (len(names) + chunk_size - 1) // chunk_size
 
         chunks: List[Tuple[List[str], int]] = []
@@ -84,7 +91,7 @@ class CwlDemangler:
             chunk_idx = i // chunk_size
             chunks.append((chunk, chunk_idx))
 
-        # Only use parallel processing if workload justifies multiprocessing overhead (≥4 chunks = ≥20K symbols)
+        # Only use parallel processing if workload justifies multiprocessing overhead (≥4 chunks)
         do_in_parallel = self.use_parallel and total_chunks >= 4
 
         logger.debug(
@@ -149,6 +156,8 @@ def _demangle_chunk_worker(
     if not chunk:
         return {}
 
+    start_time = time.time()
+
     binary_path = shutil.which("cwl-demangle")
     if binary_path is None:
         logger.error("cwl-demangle binary not found in PATH")
@@ -178,9 +187,16 @@ def _demangle_chunk_worker(
             command_parts.append("--continue-on-error")
 
         try:
-            result = subprocess.run(command_parts, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                command_parts, capture_output=True, text=True, check=True, timeout=DEFAULT_DEMANGLE_TIMEOUT
+            )
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - start_time
+            logger.exception("cwl-demangle subprocess timed out", extra={"chunk_idx": chunk_idx, "elapsed": elapsed})
+            return {}
         except subprocess.CalledProcessError:
-            logger.exception(f"cwl-demangle failed for chunk {chunk_idx}")
+            elapsed = time.time() - start_time
+            logger.exception("cwl-demangle subprocess failed", extra={"chunk_idx": chunk_idx, "elapsed": elapsed})
             return {}
 
         batch_result = json.loads(result.stdout)
