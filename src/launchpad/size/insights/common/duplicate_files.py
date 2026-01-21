@@ -42,16 +42,16 @@ class DuplicateFilesInsight(Insight[DuplicateFilesInsightResult]):
                 continue
 
             # Savings if we keep the largest one and dedupe the rest
-            dirs.sort(key=lambda d: (-d.size, d.path))
+            dirs.sort(key=lambda d: (-self._dir_size(d), d.path))
             if len(dirs) < 2:
                 continue
 
-            group_size = sum(d.size for d in dirs)
-            savings = group_size - dirs[0].size
+            group_size = sum(self._dir_size(d) for d in dirs)
+            savings = group_size - self._dir_size(dirs[0])
             if savings <= 0:
                 continue
 
-            files_with_savings = [FileSavingsResult(file_path=d.path, total_savings=d.size) for d in dirs]
+            files_with_savings = [FileSavingsResult(file_path=d.path, total_savings=self._dir_size(d)) for d in dirs]
             groups.append(
                 FileSavingsResultGroup(
                     name=os.path.basename(dirs[0].path) or "/",
@@ -110,6 +110,12 @@ class DuplicateFilesInsight(Insight[DuplicateFilesInsightResult]):
     # Helpers
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _dir_size(d: FileInfo) -> int:
+        """Get size_including_children for a directory, asserting it's set."""
+        assert d.size_including_children is not None
+        return d.size_including_children
+
     def _flatten_files(self, files: List[FileInfo]) -> List[FileInfo]:
         """Recursively flatten files, extracting nested children (e.g., assets within .car files)."""
         result: List[FileInfo] = []
@@ -126,7 +132,7 @@ class DuplicateFilesInsight(Insight[DuplicateFilesInsightResult]):
         """
         by_hash: Dict[str, List[FileInfo]] = defaultdict(list)
         for f in directories:
-            if f.hash and f.size >= self.MIN_DIR_SIZE_BYTES:
+            if f.hash and self._dir_size(f) >= self.MIN_DIR_SIZE_BYTES:
                 by_hash[f.hash].append(f)
 
         return [dirs for dirs in by_hash.values() if len(dirs) > 1]
