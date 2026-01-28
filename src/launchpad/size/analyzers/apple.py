@@ -52,11 +52,11 @@ from ..models.apple import (
     AppleAnalysisResults,
     AppleAppInfo,
     AppleInsightResults,
+    ArchitectureSlice,
     LoadCommandInfo,
     MachOBinaryAnalysis,
     SectionInfo,
     SegmentInfo,
-    SwiftMetadata,
     SymbolInfo,
 )
 
@@ -480,23 +480,30 @@ class AppleAppAnalyzer:
         if fat_binary is None or fat_binary.size == 0:
             raise RuntimeError(f"Failed to parse binary with LIEF: {binary_path}")
 
-        binary = fat_binary.at(0)
         executable_size = to_nearest_block_size(get_file_size(binary_path), APPLE_FILESYSTEM_BLOCK_SIZE)
 
-        parser = MachOParser(binary)
-        architectures = parser.extract_architectures()
-        linked_libraries = parser.extract_linked_libraries()
-        swift_protocol_conformances: List[str] = []  # parser.parse_swift_protocol_conformances()
-        objc_method_names = parser.parse_objc_method_names()
-        segments = self._extract_segments_info(parser.binary)
-        load_commands = self._extract_load_commands_info(parser.binary)
-        linkedit_info = parser.extract_linkedit_info()
+        # Parse all architecture slices
+        architecture_slices: List[ArchitectureSlice] = []
 
-        symbol_info = None
+        for slice_binary in fat_binary:
+            arch_name = slice_binary.header.cpu_type.name
+            slice_parser = MachOParser(slice_binary)
+            architecture_slices.append(
+                ArchitectureSlice(
+                    arch_name=arch_name,
+                    size=to_nearest_block_size(slice_binary.original_size, APPLE_FILESYSTEM_BLOCK_SIZE),
+                    segments=self._extract_segments_info(slice_binary),
+                    load_commands=self._extract_load_commands_info(slice_binary),
+                    header_size=slice_parser.get_header_size(),
+                    linkedit_info=slice_parser.extract_linkedit_info(),
+                )
+            )
+
         dwarf_relocations = None
 
-        # Always test symbol removal on the main app binary (not dSYM)
-        strippable_symbols_size = self._check_strip_symbols_removal(binary_path, binary)
+        # Test symbol removal on the main app binary (not dSYM)
+        # Uses first slice for file_type check
+        strippable_symbols_size = self._check_strip_symbols_removal(binary_path, fat_binary.at(0))
 
         if dwarf_binary_path:
             dsym_config = lief.MachO.ParserConfig()
@@ -507,9 +514,25 @@ class AppleAppAnalyzer:
             with open(dwarf_binary_path, "rb") as f:
                 dwarf_fat_binary = lief.MachO.parse(f, dsym_config)  # type: ignore
             if dwarf_fat_binary:
-                dwarf_binary = dwarf_fat_binary.at(0)
-                symbol_sizes = MachOSymbolSizes(dwarf_binary).get_symbol_sizes()
-                symbol_info = SymbolInfo.from_symbol_sizes(symbol_sizes=symbol_sizes)
+                # Build a map of architecture name -> dSYM slice index
+                dsym_arch_map: Dict[str, int] = {}
+                for i, dsym_slice in enumerate(dwarf_fat_binary):
+                    dsym_arch_name = dsym_slice.header.cpu_type.name
+                    dsym_arch_map[dsym_arch_name] = i
+
+                # Symbolicate each architecture slice
+                for arch_slice in architecture_slices:
+                    if arch_slice.arch_name in dsym_arch_map:
+                        dsym_index = dsym_arch_map[arch_slice.arch_name]
+                        dsym_binary = dwarf_fat_binary.at(dsym_index)
+                        slice_symbol_sizes = MachOSymbolSizes(dsym_binary).get_symbol_sizes()
+                        arch_slice.symbol_info = SymbolInfo.from_symbol_sizes(symbol_sizes=slice_symbol_sizes)
+                        logger.debug(
+                            f"Symbolicated {arch_slice.arch_name} slice with {len(slice_symbol_sizes)} symbols"
+                        )
+                    else:
+                        logger.warning(f"No dSYM slice found for architecture {arch_slice.arch_name}")
+
             else:
                 logger.error(
                     "size.apple.skip_symbol_analysis.dwarf_binary_parse_failed",
@@ -533,28 +556,14 @@ class AppleAppAnalyzer:
                 },
             )
 
-        swift_metadata = None
-        if not skip_swift_metadata:
-            swift_metadata = SwiftMetadata(
-                protocol_conformances=swift_protocol_conformances,
-            )
-
         return MachOBinaryAnalysis(
             binary_absolute_path=binary_path,
             binary_relative_path=binary_path.relative_to(app_bundle_path),
             executable_size=executable_size,
-            architectures=architectures,
-            linked_libraries=linked_libraries,
-            swift_metadata=swift_metadata,
-            symbol_info=symbol_info,
-            objc_method_names=objc_method_names,
             is_main_binary=is_main_binary,
-            segments=segments,
-            load_commands=load_commands,
-            header_size=parser.get_header_size(),
+            architecture_slices=architecture_slices,
             dwarf_relocations=dwarf_relocations,
             strippable_symbols_size=strippable_symbols_size,
-            linkedit_info=linkedit_info,
         )
 
     @sentry_sdk.trace

@@ -158,6 +158,19 @@ class LinkEditInfo:
 
 
 @dataclass
+class ArchitectureSlice:
+    """Analysis results for a single architecture slice in a Mach-O binary."""
+
+    arch_name: str
+    size: int
+    segments: List[SegmentInfo]
+    load_commands: List[LoadCommandInfo]
+    header_size: int = 0
+    linkedit_info: LinkEditInfo | None = None
+    symbol_info: "SymbolInfo | None" = None
+
+
+@dataclass
 class MachOBinaryAnalysis:
     """Mach-O binary analysis results."""
 
@@ -165,17 +178,11 @@ class MachOBinaryAnalysis:
     binary_relative_path: Path
     executable_size: int
     is_main_binary: bool
-    architectures: List[str]
-    linked_libraries: List[str]
-    objc_method_names: List[str]
-    segments: List[SegmentInfo]
-    load_commands: List[LoadCommandInfo]
+    architecture_slices: List[ArchitectureSlice]
     swift_metadata: SwiftMetadata | None = None
     symbol_info: SymbolInfo | None = None
-    header_size: int = 0
     dwarf_relocations: DwarfRelocationsData | None = None
     strippable_symbols_size: int = 0
-    linkedit_info: LinkEditInfo | None = None
 
 
 @dataclass
