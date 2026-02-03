@@ -140,7 +140,12 @@ async def update_artifact(
     # Track which fields were updated
     updated_fields = list(data.keys())
 
-    return {"success": True, "artifactId": artifact_id, "updatedFields": updated_fields}
+    return {
+        "success": True,
+        "artifactId": artifact_id,
+        "updatedFields": updated_fields,
+        "requestedFeatures": ["size_analysis"],
+    }
 
 
 @app.get("/api/0/organizations/{org}/chunk-upload/")
@@ -165,7 +170,6 @@ async def upload_chunk(
     file: UploadFile,
     authorization: str = Header(None),
 ):
-    """Upload a file chunk."""
     # Read chunk data
     chunk_data = await file.read()
 
