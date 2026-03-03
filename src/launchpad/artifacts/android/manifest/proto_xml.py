@@ -389,7 +389,21 @@ class ProtoXmlUtils:
 
         # Special handling for string references
         if value.startswith("@"):
-            return ProtoXmlUtils._get_resource_by_key_from_proto_resource_files(value, proto_res_tables)
+            resolved = ProtoXmlUtils._get_resource_by_key_from_proto_resource_files(value, proto_res_tables)
+            if resolved is not None:
+                return resolved
+
+            # Key-based lookup failed, fall back to compiled_item ref ID
+            logger.debug(f"key-based lookup failed for {value}, trying compiled_item ref")
+            if (
+                attribute.HasField("compiled_item")
+                and attribute.compiled_item.HasField("ref")
+                and attribute.compiled_item.ref.id
+            ):
+                return ProtoXmlUtils._get_resource_by_id_from_proto_resource_files(
+                    attribute.compiled_item.ref.id, proto_res_tables
+                )
+            return None
 
         return str(value)
 
