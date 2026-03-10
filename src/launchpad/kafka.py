@@ -31,6 +31,8 @@ from launchpad.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+DEFAULT_TASK_TIMEOUT_SECONDS = 720  # 12 minutes
+
 # Schema codec for preprod artifact events
 PREPROD_ARTIFACT_SCHEMA = get_codec(PREPROD_ARTIFACT_EVENTS_TOPIC)
 
@@ -79,8 +81,7 @@ def process_kafka_message_with_service(
     factory: LaunchpadStrategyFactory,
 ) -> Any:
     """Process a Kafka message by spawning a fresh subprocess with timeout protection."""
-    timeout = int(os.getenv("KAFKA_TASK_TIMEOUT_SECONDS", "720"))  # 12 minutes default
-
+    timeout = int(os.getenv("KAFKA_TASK_TIMEOUT_SECONDS", str(DEFAULT_TASK_TIMEOUT_SECONDS)))
     try:
         decoded = PREPROD_ARTIFACT_SCHEMA.decode(msg.payload.value)
     except Exception:
@@ -148,6 +149,13 @@ def create_kafka_consumer() -> LaunchpadKafkaConsumer:
     if not environment:
         raise ValueError("LAUNCHPAD_ENV environment variable is required")
 
+    # When all RunTaskInThreads threads are busy, Arroyo retries submit()
+    # in a backoff loop without calling consumer.poll(). If this exceeds
+    # max.poll.interval.ms (default 5min), the broker evicts the consumer,
+    # triggering a rebalance loop. Set it higher than the task timeout.
+    task_timeout = int(os.getenv("KAFKA_TASK_TIMEOUT_SECONDS", str(DEFAULT_TASK_TIMEOUT_SECONDS)))
+    max_poll_interval_ms = (task_timeout + 120) * 1000  # task timeout + 2 min buffer
+
     consumer_config = {
         "bootstrap.servers": config.bootstrap_servers,
         "group.id": config.group_id,
@@ -156,6 +164,7 @@ def create_kafka_consumer() -> LaunchpadKafkaConsumer:
         "enable.auto.commit": False,
         "enable.auto.offset.store": False,
         "security.protocol": config.security_protocol,
+        "max.poll.interval.ms": max_poll_interval_ms,
     }
 
     # SASL is used in some prod environments.
